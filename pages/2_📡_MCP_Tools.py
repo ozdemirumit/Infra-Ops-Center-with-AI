@@ -16,6 +16,8 @@ from tools.registry import (
     set_builtin_enabled, add_custom_tool, update_custom_tool,
     delete_custom_tool, set_custom_enabled, get_custom_tool,
     generate_tools_from_doc,
+    delete_builtin_tool, restore_builtin_tool, restore_all_builtin_tools,
+    get_deleted_builtin_tools,
 )
 
 st.set_page_config(page_title="MCP Tools", page_icon="📡", layout="wide")
@@ -96,11 +98,36 @@ with tab_manage:
                     if enabled != tool.get("enabled", True):
                         set_builtin_enabled(name, enabled)
                         st.rerun()
+
+                    if st.button("🗑️ Remove", key=f"del_builtin_{name}", use_container_width=True,
+                                 help="Remove from system (can be restored later)"):
+                        delete_builtin_tool(name)
+                        st.rerun()
                 else:
                     if tool.get("enabled"):
                         st.success("Active", icon="✅")
                     else:
                         st.error("Inactive", icon="⛔")
+
+    # ── Removed built-in tools (restore section) ──
+    if is_admin:
+        deleted = get_deleted_builtin_tools()
+        if deleted:
+            with st.expander(f"♻️ Restore Removed Tools ({len(deleted)})", expanded=False):
+                col_all, _ = st.columns([1, 3])
+                with col_all:
+                    if st.button("♻️ Restore All Defaults", type="primary", use_container_width=True):
+                        n = restore_all_builtin_tools()
+                        st.success(f"Restored {n} built-in tools.")
+                        st.rerun()
+
+                for d in deleted:
+                    c1, c2, c3 = st.columns([1, 4, 1])
+                    c1.markdown(f"### {d['icon']}")
+                    c2.markdown(f"**{d['name']}**\n\n{d['description']}...")
+                    if c3.button("Restore", key=f"restore_{d['name']}", use_container_width=True):
+                        restore_builtin_tool(d["name"])
+                        st.rerun()
 
     st.divider()
 

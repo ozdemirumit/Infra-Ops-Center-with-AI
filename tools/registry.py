@@ -108,15 +108,17 @@ def _ensure_state() -> dict:
 
 def get_active_tools() -> list[dict]:
     """
-    Returns active (enabled) tool definitions.
+    Returns active (enabled, not deleted) tool definitions.
     Built-in + custom, Anthropic format: {name, description, input_schema}.
     """
     state = _ensure_state()
     tools = []
 
-    # Built-in
+    # Built-in (skip deleted)
     for name, tool_def in _BUILTIN_TOOL_DEFS.items():
         info = state["builtin_tools"].get(name, {"enabled": True})
+        if info.get("deleted"):
+            continue
         if info.get("enabled", True):
             tools.append(tool_def)
 
@@ -141,14 +143,16 @@ def get_active_tools() -> list[dict]:
 def get_all_tools_with_status() -> list[dict]:
     """
     Returns all tools with metadata (for the UI management page).
-    Each item: name, description, enabled, is_builtin, icon, execute_backend, ...
+    Excludes deleted built-in tools.
     """
     state = _ensure_state()
     result = []
 
-    # Built-in
+    # Built-in (skip deleted)
     for name, tool_def in _BUILTIN_TOOL_DEFS.items():
         info = state["builtin_tools"].get(name, {"enabled": True})
+        if info.get("deleted"):
+            continue
         result.append({
             "name": name,
             "description": tool_def.get("description", ""),
@@ -170,6 +174,21 @@ def get_all_tools_with_status() -> list[dict]:
     return result
 
 
+def get_deleted_builtin_tools() -> list[dict]:
+    """Returns built-in tools that have been deleted (for restore UI)."""
+    state = _ensure_state()
+    result = []
+    for name, tool_def in _BUILTIN_TOOL_DEFS.items():
+        info = state["builtin_tools"].get(name, {})
+        if info.get("deleted"):
+            result.append({
+                "name": name,
+                "description": tool_def.get("description", "")[:80],
+                "icon": _BUILTIN_TOOL_ICONS.get(name, "🛠️"),
+            })
+    return result
+
+
 def get_device_types() -> dict:
     """
     Generates device types from active tools.
@@ -179,9 +198,11 @@ def get_device_types() -> dict:
     state = _ensure_state()
     device_types = {}
 
-    # Built-in tools
+    # Built-in tools (skip deleted)
     for tool_name, dt_info in _BUILTIN_DEVICE_TYPES.items():
         info = state["builtin_tools"].get(tool_name, {"enabled": True})
+        if info.get("deleted"):
+            continue
         if info.get("enabled", True):
             dtype = dt_info["device_type"]
             device_types[dtype] = {
@@ -214,8 +235,44 @@ def set_builtin_enabled(tool_name: str, enabled: bool) -> None:
         raise ValueError(f"Unknown built-in tool: {tool_name}")
     state = _ensure_state()
     state["builtin_tools"][tool_name]["enabled"] = enabled
+    state["builtin_tools"][tool_name].pop("deleted", None)
     _save_state(state)
     logger.info(f"Built-in tool '{tool_name}' → {'enabled' if enabled else 'disabled'}")
+
+
+def delete_builtin_tool(tool_name: str) -> None:
+    """Soft-delete a built-in tool — hidden from UI and AI until restored."""
+    if tool_name not in _BUILTIN_TOOL_DEFS:
+        raise ValueError(f"Unknown built-in tool: {tool_name}")
+    state = _ensure_state()
+    state["builtin_tools"][tool_name] = {"enabled": False, "deleted": True}
+    _save_state(state)
+    logger.info(f"Built-in tool '{tool_name}' deleted (soft delete)")
+
+
+def restore_builtin_tool(tool_name: str) -> None:
+    """Restore a soft-deleted built-in tool."""
+    if tool_name not in _BUILTIN_TOOL_DEFS:
+        raise ValueError(f"Unknown built-in tool: {tool_name}")
+    state = _ensure_state()
+    state["builtin_tools"][tool_name] = {"enabled": True}
+    _save_state(state)
+    logger.info(f"Built-in tool '{tool_name}' restored")
+
+
+def restore_all_builtin_tools() -> int:
+    """Restore all soft-deleted built-in tools. Returns count restored."""
+    state = _ensure_state()
+    count = 0
+    for name in _BUILTIN_TOOL_DEFS:
+        info = state["builtin_tools"].get(name, {})
+        if info.get("deleted"):
+            state["builtin_tools"][name] = {"enabled": True}
+            count += 1
+    if count:
+        _save_state(state)
+        logger.info(f"Restored {count} built-in tools")
+    return count
 
 
 # ═══════════════════════════════════════════════════════════════════
