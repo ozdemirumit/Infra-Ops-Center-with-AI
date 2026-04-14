@@ -1,0 +1,12 @@
+[theme]
+primaryColor="#22d3ee"
+backgroundColor="#050a18"
+secondaryBackgroundColor="#0f1a36"
+textColor="#c8d6e5"
+font="sans serif"
+
+[ui]
+hideTopBar = true
+
+[server]
+headless = true

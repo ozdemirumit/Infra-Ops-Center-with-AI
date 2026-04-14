@@ -1,0 +1,47 @@
+# Ortam değişkenleri (API anahtarları, şifreler)
+.env
+
+# Runtime verileri
+devices/devices.json
+sessions/sessions.json
+tools/tools_state.json
+monitor_state.json
+pending_tickets.json
+archived_tickets.json
+error_output.json
+
+# Knowledge Base runtime
+knowledge_base/tfidf_index.pkl
+knowledge_base/runbooks/
+knowledge_base/session_memory/
+
+# Log dosyaları
+logs/
+ai_proxy.log
+
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Claude Code
+.claude/
+.agents/
+
+# OS
+Thumbs.db
+Desktop.ini
+.DS_Store
+
+# Commvault MCP (ayrı proje)
+commvault-mcp/

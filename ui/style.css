@@ -1,0 +1,510 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Infra Ops Center — Futuristic Cyberpunk Dashboard
+   Neon accents, deep space background, glass panels, smooth animations
+   ═══════════════════════════════════════════════════════════════════ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root {
+    /* Deep Space Palette */
+    --bg-void: #050a18;
+    --bg-deep: #0a1128;
+    --bg-surface: #0f1a36;
+    --bg-panel: rgba(15, 26, 54, 0.75);
+    --bg-panel-hover: rgba(20, 35, 70, 0.85);
+    --bg-glass: rgba(10, 17, 40, 0.65);
+    --bg-input: rgba(15, 26, 54, 0.6);
+
+    /* Borders */
+    --border-dim: rgba(100, 150, 255, 0.06);
+    --border-subtle: rgba(100, 150, 255, 0.12);
+    --border-glow: rgba(56, 189, 248, 0.25);
+    --border-neon: rgba(56, 189, 248, 0.5);
+
+    /* Neon Accents */
+    --neon-cyan: #22d3ee;
+    --neon-blue: #3b82f6;
+    --neon-purple: #a855f7;
+    --neon-pink: #ec4899;
+    --neon-emerald: #10b981;
+    --neon-amber: #f59e0b;
+    --neon-red: #ef4444;
+
+    /* Text */
+    --text-bright: #f0f4ff;
+    --text-primary: #c8d6e5;
+    --text-secondary: #7b8fa8;
+    --text-muted: #4a5c73;
+
+    /* Gradients */
+    --grad-primary: linear-gradient(135deg, #3b82f6 0%, #a855f7 50%, #ec4899 100%);
+    --grad-surface: linear-gradient(180deg, rgba(15,26,54,0.8) 0%, rgba(10,17,40,0.4) 100%);
+    --grad-neon: linear-gradient(135deg, #22d3ee 0%, #3b82f6 50%, #a855f7 100%);
+    --grad-dark: linear-gradient(135deg, #0f1a36 0%, #0a1128 100%);
+
+    /* Effects */
+    --shadow-neon: 0 0 20px rgba(56, 189, 248, 0.12), 0 0 40px rgba(56, 189, 248, 0.06);
+    --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.4);
+    --shadow-float: 0 8px 40px rgba(0, 0, 0, 0.5), 0 0 20px rgba(56, 189, 248, 0.08);
+    --glow-cyan: 0 0 12px rgba(34, 211, 238, 0.3);
+    --glow-purple: 0 0 12px rgba(168, 85, 247, 0.3);
+
+    --radius-sm: 8px;
+    --radius-md: 12px;
+    --radius-lg: 16px;
+    --radius-xl: 20px;
+    --transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+/* ── Global Typography ── */
+html, body, .stApp, p, h1, h2, h3, h4, h5, h6, li, a, label {
+    font-family: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif !important;
+}
+
+.material-symbols-rounded, .material-symbols-outlined {
+    font-family: 'Material Symbols Rounded', 'Material Symbols Outlined' !important;
+}
+
+code, pre, .stCode, [data-testid="stCode"] {
+    font-family: 'JetBrains Mono', 'Fira Code', monospace !important;
+}
+
+/* ── App Background — Deep Space ── */
+.stApp {
+    background: var(--bg-void) !important;
+    background-image:
+        radial-gradient(ellipse 80% 60% at 15% 10%, rgba(56,189,248,0.06) 0%, transparent 60%),
+        radial-gradient(ellipse 60% 50% at 85% 80%, rgba(168,85,247,0.05) 0%, transparent 50%),
+        radial-gradient(circle at 50% 50%, rgba(15,26,54,0.3) 0%, transparent 70%) !important;
+    color: var(--text-primary) !important;
+}
+
+/* ── Sidebar — Glass Panel ── */
+[data-testid="stSidebar"] {
+    background: var(--bg-glass) !important;
+    backdrop-filter: blur(24px) saturate(180%) !important;
+    -webkit-backdrop-filter: blur(24px) saturate(180%) !important;
+    border-right: 1px solid var(--border-subtle) !important;
+    box-shadow: 4px 0 24px rgba(0,0,0,0.3) !important;
+}
+
+[data-testid="stSidebar"] [data-testid="stMarkdown"] h3 {
+    background: var(--grad-neon) !important;
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    background-clip: text !important;
+    font-weight: 800 !important;
+    letter-spacing: -0.02em;
+}
+
+/* ── Headers — Neon Gradient ── */
+h1 {
+    font-weight: 900 !important;
+    font-size: 1.85rem !important;
+    letter-spacing: -0.04em;
+    background: var(--grad-neon) !important;
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    background-clip: text !important;
+    text-shadow: none;
+}
+
+h2 {
+    font-weight: 700 !important;
+    font-size: 1.35rem !important;
+    letter-spacing: -0.025em;
+    color: var(--text-bright) !important;
+    -webkit-text-fill-color: var(--text-bright) !important;
+}
+
+h3 {
+    font-weight: 600 !important;
+    font-size: 1.1rem !important;
+    color: var(--text-primary) !important;
+    -webkit-text-fill-color: var(--text-primary) !important;
+}
+
+/* ── Primary Buttons — Neon Gradient ── */
+.stButton > button {
+    background: var(--grad-primary) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: var(--radius-sm) !important;
+    padding: 0.55rem 1.3rem !important;
+    font-weight: 600 !important;
+    font-size: 0.875rem !important;
+    letter-spacing: 0.01em;
+    transition: var(--transition) !important;
+    box-shadow: 0 2px 12px rgba(59,130,246,0.25) !important;
+    position: relative;
+    overflow: hidden;
+}
+
+.stButton > button::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(135deg, rgba(255,255,255,0.15) 0%, transparent 50%);
+    opacity: 0;
+    transition: opacity 0.3s;
+}
+
+.stButton > button:hover {
+    transform: translateY(-2px) !important;
+    box-shadow: 0 4px 20px rgba(59,130,246,0.4), var(--glow-cyan) !important;
+}
+
+.stButton > button:hover::before {
+    opacity: 1;
+}
+
+.stButton > button:active {
+    transform: translateY(0) !important;
+}
+
+/* Secondary Buttons */
+.stButton > button[kind="secondary"] {
+    background: var(--bg-panel) !important;
+    border: 1px solid var(--border-subtle) !important;
+    box-shadow: none !important;
+}
+
+.stButton > button[kind="secondary"]:hover {
+    background: var(--bg-panel-hover) !important;
+    border-color: var(--border-glow) !important;
+    box-shadow: var(--shadow-neon) !important;
+}
+
+/* ── Inputs — Glowing Focus ── */
+.stTextInput > div > div > input,
+.stSelectbox > div > div > div,
+.stTextArea > div > div > textarea,
+.stNumberInput > div > div > input {
+    background: var(--bg-input) !important;
+    border: 1px solid var(--border-subtle) !important;
+    color: var(--text-bright) !important;
+    border-radius: var(--radius-sm) !important;
+    transition: var(--transition) !important;
+    font-size: 0.875rem !important;
+}
+
+.stTextInput > div > div > input:focus,
+.stTextArea > div > div > textarea:focus {
+    border-color: var(--neon-cyan) !important;
+    box-shadow: 0 0 0 2px rgba(34,211,238,0.15), var(--glow-cyan) !important;
+}
+
+/* ── Chat — Holographic Bubbles ── */
+[data-testid="stChatInput"] {
+    background: rgba(10, 17, 40, 0.85) !important;
+    backdrop-filter: blur(20px) !important;
+    border: 1px solid var(--border-glow) !important;
+    border-radius: var(--radius-xl) !important;
+    box-shadow: var(--shadow-float) !important;
+}
+
+[data-testid="stChatInput"] textarea {
+    color: var(--text-bright) !important;
+    font-size: 0.9rem !important;
+}
+
+[data-testid="stChatMessage"] {
+    background: var(--bg-panel) !important;
+    border-radius: var(--radius-lg) !important;
+    padding: 1.1rem 1.3rem !important;
+    margin-bottom: 0.75rem !important;
+    border: 1px solid var(--border-dim) !important;
+    transition: var(--transition) !important;
+    backdrop-filter: blur(8px) !important;
+}
+
+[data-testid="stChatMessage"]:hover {
+    border-color: var(--border-subtle) !important;
+    box-shadow: var(--shadow-neon) !important;
+}
+
+[data-testid="stChatMessage"] [data-testid="chatAvatarIcon-user"] {
+    background: linear-gradient(135deg, #6366f1, #a855f7) !important;
+    box-shadow: var(--glow-purple) !important;
+}
+
+[data-testid="stChatMessage"] [data-testid="chatAvatarIcon-assistant"] {
+    background: linear-gradient(135deg, #10b981, #22d3ee) !important;
+    box-shadow: var(--glow-cyan) !important;
+}
+
+/* ── Containers & Cards — Neon Glass ── */
+div[data-testid="stContainer"][class*="border"] {
+    background: var(--bg-panel) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: var(--radius-md) !important;
+    padding: 1rem !important;
+    transition: var(--transition) !important;
+    backdrop-filter: blur(8px) !important;
+}
+
+div[data-testid="stContainer"][class*="border"]:hover {
+    border-color: var(--border-glow) !important;
+    box-shadow: var(--shadow-neon) !important;
+}
+
+/* ── Metrics — Neon Values ── */
+div[data-testid="stMetricValue"] {
+    font-weight: 800 !important;
+    font-size: 1.6rem !important;
+    background: var(--grad-neon) !important;
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    background-clip: text !important;
+}
+
+div[data-testid="stMetricLabel"] {
+    font-size: 0.7rem !important;
+    font-weight: 600 !important;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted) !important;
+}
+
+/* ── Expanders — Glass Panels ── */
+[data-testid="stExpander"] {
+    background: var(--bg-panel) !important;
+    border: 1px solid var(--border-dim) !important;
+    border-radius: var(--radius-md) !important;
+    overflow: hidden;
+    transition: var(--transition) !important;
+}
+
+[data-testid="stExpander"]:hover {
+    border-color: var(--border-subtle) !important;
+}
+
+[data-testid="stExpander"] > summary {
+    background: rgba(15, 26, 54, 0.5) !important;
+    padding: 0.8rem 1rem !important;
+    font-weight: 500 !important;
+}
+
+/* ── Tabs — Glowing Underline ── */
+.stTabs [data-baseweb="tab-list"] {
+    gap: 2px !important;
+    background: rgba(10, 17, 40, 0.5) !important;
+    border-radius: var(--radius-md) !important;
+    padding: 4px !important;
+    border: 1px solid var(--border-dim) !important;
+}
+
+.stTabs [data-baseweb="tab"] {
+    border-radius: var(--radius-sm) !important;
+    padding: 0.55rem 1.1rem !important;
+    font-weight: 500 !important;
+    font-size: 0.85rem !important;
+    color: var(--text-secondary) !important;
+    background: transparent !important;
+    transition: var(--transition) !important;
+}
+
+.stTabs [data-baseweb="tab"]:hover {
+    color: var(--text-bright) !important;
+    background: rgba(56,189,248,0.08) !important;
+}
+
+.stTabs [aria-selected="true"] {
+    background: rgba(56,189,248,0.12) !important;
+    color: var(--neon-cyan) !important;
+    box-shadow: inset 0 -2px 0 var(--neon-cyan) !important;
+}
+
+.stTabs [data-baseweb="tab-highlight"] {
+    background-color: var(--neon-cyan) !important;
+}
+
+/* ── Status Elements — Neon Borders ── */
+.stSuccess {
+    background: rgba(16, 185, 129, 0.08) !important;
+    border: 1px solid rgba(16, 185, 129, 0.25) !important;
+    border-radius: var(--radius-sm) !important;
+    border-left: 3px solid var(--neon-emerald) !important;
+}
+
+.stWarning {
+    background: rgba(245, 158, 11, 0.08) !important;
+    border: 1px solid rgba(245, 158, 11, 0.25) !important;
+    border-radius: var(--radius-sm) !important;
+    border-left: 3px solid var(--neon-amber) !important;
+}
+
+.stError {
+    background: rgba(239, 68, 68, 0.08) !important;
+    border: 1px solid rgba(239, 68, 68, 0.25) !important;
+    border-radius: var(--radius-sm) !important;
+    border-left: 3px solid var(--neon-red) !important;
+}
+
+.stInfo {
+    background: rgba(56, 189, 248, 0.08) !important;
+    border: 1px solid rgba(56, 189, 248, 0.2) !important;
+    border-radius: var(--radius-sm) !important;
+    border-left: 3px solid var(--neon-cyan) !important;
+}
+
+/* ── Code Blocks — Terminal Style ── */
+[data-testid="stCode"] {
+    background: rgba(5, 10, 24, 0.8) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: var(--radius-sm) !important;
+    box-shadow: inset 0 1px 4px rgba(0,0,0,0.3) !important;
+}
+
+[data-testid="stCode"] code {
+    color: #a5f3fc !important;
+    font-size: 0.82rem !important;
+}
+
+/* ── Dividers ── */
+hr {
+    border: none !important;
+    height: 1px !important;
+    background: linear-gradient(90deg, transparent 0%, var(--border-subtle) 50%, transparent 100%) !important;
+    margin: 1.5em 0 !important;
+}
+
+/* ── Status Widget ── */
+[data-testid="stStatusWidget"] {
+    background: var(--bg-panel) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: var(--radius-md) !important;
+}
+
+/* ── Spinner ── */
+.stSpinner > div > div {
+    border-top-color: var(--neon-cyan) !important;
+}
+
+/* ── JSON Viewer ── */
+[data-testid="stJson"] {
+    background: rgba(5, 10, 24, 0.6) !important;
+    border-radius: var(--radius-sm) !important;
+    border: 1px solid var(--border-dim) !important;
+}
+
+/* ── Forms — Bordered Panel ── */
+[data-testid="stForm"] {
+    background: var(--bg-panel) !important;
+    border: 1px solid var(--border-subtle) !important;
+    border-radius: var(--radius-md) !important;
+    padding: 1.25rem !important;
+}
+
+/* ── DataFrames ── */
+[data-testid="stDataFrame"] {
+    border-radius: var(--radius-sm) !important;
+    overflow: hidden;
+    border: 1px solid var(--border-subtle) !important;
+}
+
+/* ── Captions ── */
+.stCaption, small {
+    color: var(--text-muted) !important;
+    font-size: 0.72rem !important;
+}
+
+/* ── File Uploader ── */
+[data-testid="stFileUploader"] {
+    border: 2px dashed var(--border-subtle) !important;
+    border-radius: var(--radius-md) !important;
+    padding: 1rem !important;
+    transition: var(--transition) !important;
+}
+
+[data-testid="stFileUploader"]:hover {
+    border-color: var(--neon-cyan) !important;
+    box-shadow: var(--glow-cyan) !important;
+}
+
+/* ── Toast ── */
+[data-testid="stToast"] {
+    background: var(--bg-panel) !important;
+    border: 1px solid var(--border-glow) !important;
+    border-radius: var(--radius-sm) !important;
+    backdrop-filter: blur(16px) !important;
+    box-shadow: var(--shadow-float) !important;
+}
+
+/* ── Toggle ── */
+[data-testid="stToggle"] label > div:first-child {
+    border-color: var(--border-subtle) !important;
+}
+
+/* ── Scrollbar — Minimal Neon ── */
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(56,189,248,0.15); border-radius: 4px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(56,189,248,0.3); }
+
+/* ── Animations ── */
+@keyframes fadeSlideIn {
+    from { opacity: 0; transform: translateY(12px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes neonPulse {
+    0%, 100% { opacity: 1; box-shadow: var(--glow-cyan); }
+    50% { opacity: 0.7; box-shadow: none; }
+}
+
+@keyframes gradientShift {
+    0% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
+    100% { background-position: 0% 50%; }
+}
+
+/* Status dots */
+.status-dot-active {
+    display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--neon-emerald);
+    animation: neonPulse 2s infinite; margin-right: 6px;
+}
+
+.status-dot-warning {
+    display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--neon-amber);
+    animation: neonPulse 1.5s infinite; margin-right: 6px;
+}
+
+.status-dot-error {
+    display: inline-block; width: 8px; height: 8px;
+    border-radius: 50%; background: var(--neon-red);
+    animation: neonPulse 1s infinite; margin-right: 6px;
+}
+
+/* ── Hide "main" link in sidebar nav (logo button replaces it) ── */
+[data-testid="stSidebarNav"] > ul > li:first-child {
+    display: none !important;
+}
+
+/* ── Sidebar Nav Links ── */
+[data-testid="stSidebarNav"] a {
+    color: var(--text-secondary) !important;
+    transition: var(--transition) !important;
+    border-radius: var(--radius-sm) !important;
+}
+
+[data-testid="stSidebarNav"] a:hover {
+    color: var(--neon-cyan) !important;
+    background: rgba(56,189,248,0.06) !important;
+}
+
+[data-testid="stSidebarNav"] a[aria-current="page"] {
+    color: var(--neon-cyan) !important;
+    background: rgba(56,189,248,0.1) !important;
+    border-left: 2px solid var(--neon-cyan) !important;
+}
+
+/* ── Markdown links ── */
+a { color: var(--neon-cyan) !important; text-decoration: none !important; }
+a:hover { color: var(--neon-blue) !important; text-decoration: underline !important; }
+
+/* ── Selection ── */
+::selection { background: rgba(56,189,248,0.25); color: var(--text-bright); }
