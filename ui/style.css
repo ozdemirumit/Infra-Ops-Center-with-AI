@@ -97,6 +97,12 @@ code, pre, .stCode, [data-testid="stCode"] {
     font-weight: 500 !important;
 }
 
+/* Add 🏠 icon before the "Home" link (first nav entry) */
+[data-testid="stSidebarNav"] > ul > li:first-child a > span:first-child::before {
+    content: "🏠 ";
+    margin-right: 2px;
+}
+
 [data-testid="stSidebarNav"] a:hover {
     color: var(--text-primary) !important;
     background: var(--bg-hover) !important;
