@@ -24,8 +24,13 @@ class Settings:
     # --- Direct API keys (used when proxy is disabled) ---
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     DEFAULT_MODEL: str = os.getenv("DEFAULT_MODEL", "claude-sonnet-4-5")
     DEFAULT_PROVIDER: str = os.getenv("DEFAULT_PROVIDER", "anthropic")
+
+    # --- Ollama (local model server) ---
+    OLLAMA_URL: str = os.getenv("OLLAMA_URL", "http://localhost:11434")
+    OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "llama3.1")
 
     # --- SSH ---
     SSH_TIMEOUT: int = int(os.getenv("SSH_TIMEOUT", "20"))
