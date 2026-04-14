@@ -165,7 +165,7 @@ for check_name, cfg in checks_config.items():
                         if st.button("👁️ View", key=f"go_ai_{check_name}"):
                             st.session_state.active_session_id = sid
                             st.session_state.messages = []
-                            st.switch_page("main.py")
+                            st.switch_page("Home.py")
                     else:
                         st.info("ℹ️ An incident already exists for this metric.")
                     st.rerun()
@@ -299,4 +299,4 @@ else:
                 if st.button("👁️ View", key=f"inc_{sess['id']}", use_container_width=True):
                     st.session_state.active_session_id = sess["id"]
                     st.session_state.messages = []
-                    st.switch_page("main.py")
+                    st.switch_page("Home.py")

@@ -10,9 +10,13 @@ from config.settings import settings
 
 def render_sidebar() -> dict:
     with st.sidebar:
-        if st.button("🛡️ Infra Ops Center", use_container_width=True, type="primary"):
-            st.session_state.active_session_id = None
-            st.switch_page("main.py")
+        # Brand header
+        st.markdown(
+            "<div style='padding: 0.25rem 0 0.5rem 0.25rem; font-weight: 700; "
+            "font-size: 0.95rem; color: #e4e7ec; letter-spacing: -0.01em;'>"
+            "🛡️ Infra Ops Center</div>",
+            unsafe_allow_html=True,
+        )
 
         user = get_current_user()
         role = "⚡ Admin" if is_admin() else "👁️ Viewer"

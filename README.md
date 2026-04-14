@@ -83,7 +83,7 @@ pip install -r requirements.txt
 python setup_env.py
 
 # 5. Run
-python -m streamlit run main.py
+python -m streamlit run Home.py
 ```
 
 The `setup_env.py` script will interactively:
@@ -173,7 +173,7 @@ Custom tools can be added via the MCP Tools page with SSH, HTTP, or Python scrip
 ## 📁 Project Structure
 
 ```
-main.py                        # Main entry point (Streamlit)
+Home.py                        # Main entry point (Streamlit)
 setup_env.py                   # Initial setup script (generates .env)
 config/settings.py             # Central settings
 auth/authenticator.py          # Login, session, roles

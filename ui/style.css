@@ -83,11 +83,6 @@ code, pre, .stCode, [data-testid="stCode"] {
     letter-spacing: -0.01em;
 }
 
-/* Hide "main" nav link (sidebar has its own logo button) */
-[data-testid="stSidebarNav"] > ul > li:first-child {
-    display: none !important;
-}
-
 /* ── Sidebar Navigation ── */
 [data-testid="stSidebarNav"] {
     padding-top: 0 !important;

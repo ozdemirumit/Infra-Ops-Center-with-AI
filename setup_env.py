@@ -150,7 +150,7 @@ RAG_TOP_K=5
     print(f"  Proxy:     {'Enabled' if proxy_enabled == 'true' else 'Disabled (Direct API)'}")
     print()
     print("Start the application:")
-    print("  python -m streamlit run main.py")
+    print("  python -m streamlit run Home.py")
     print()
 
 
