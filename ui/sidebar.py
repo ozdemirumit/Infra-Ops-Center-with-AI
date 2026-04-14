@@ -1,5 +1,5 @@
 """
-Sidebar — Futuristic control panel.
+Sidebar — Enterprise control panel.
 """
 
 import streamlit as st

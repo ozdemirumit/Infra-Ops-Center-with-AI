@@ -16,6 +16,7 @@ from pathlib import Path
 from datetime import datetime, timezone, timedelta
 from config.settings import settings
 from auth.authenticator import check_auth
+from ui.sidebar import render_sidebar
 from core.document_processor import SUPPORTED_EXTENSIONS
 OLLAMA_MODELS = [
     "Qwen2.5:32B", "qwen3.5:27b", "qwen3.5:35b", "qwen3.5:397b-cloud",
@@ -34,6 +35,8 @@ if not check_auth():
     st.stop()
 
 
+
+render_sidebar()
 def _get_rag_engine():
     """RAG Engine singleton."""
     if "rag_engine" not in st.session_state:

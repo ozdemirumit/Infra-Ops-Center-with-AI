@@ -7,6 +7,7 @@ import streamlit as st
 import pandas as pd
 import os
 from auth.authenticator import check_auth
+from ui.sidebar import render_sidebar
 from devices.storage import DeviceStorage, DEVICE_TYPES
 
 st.set_page_config(page_title="Server Inventory", page_icon="📋", layout="wide")
@@ -21,6 +22,8 @@ if os.path.exists(css_path):
 if not check_auth():
     st.stop()
 
+
+render_sidebar()
 st.title("📋 Server Inventory")
 st.markdown("Detailed breakdown of all servers and network devices in the infrastructure.")
 

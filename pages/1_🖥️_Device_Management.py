@@ -8,6 +8,7 @@ import streamlit as st
 import os
 from auth.authenticator import check_auth, is_admin
 from devices.storage import DeviceStorage, DEVICE_TYPES
+from ui.sidebar import render_sidebar
 
 st.set_page_config(page_title="Device Management", page_icon="🖥️", layout="wide")
 
@@ -20,6 +21,8 @@ if os.path.exists(css_path):
 # Auth check
 if not check_auth():
     st.stop()
+
+render_sidebar()
 
 if not is_admin():
     st.error("⛔ You do not have permission to access this page. Please log in with an admin account.")

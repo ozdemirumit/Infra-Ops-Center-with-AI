@@ -9,6 +9,7 @@ import json
 import os
 import streamlit as st
 from auth.authenticator import check_auth
+from ui.sidebar import render_sidebar
 from devices.storage import DeviceStorage, DEVICE_TYPES
 from tools.registry import (
     get_all_tools_with_status, get_active_tools,
@@ -28,6 +29,8 @@ if os.path.exists(css_path):
 if not check_auth():
     st.stop()
 
+
+render_sidebar()
 is_admin = st.session_state.get("role") == "admin"
 
 st.title("📡 MCP Tools (Model Context Protocol)")
