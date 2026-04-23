@@ -209,6 +209,39 @@ knowledge_base/                # RAG document storage
 logging_config/logger.py       # Syslog RFC 5424 logging
 ```
 
+## 🐳 Docker Deployment
+
+```bash
+# Build and run with docker-compose
+docker-compose up -d
+
+# Or build manually
+docker build -t infra-ops-center .
+docker run -p 8501:8501 --env-file .env infra-ops-center
+```
+
+## 🧪 Testing
+
+```bash
+pip install pytest
+python -m pytest tests/ -v
+```
+
+24 unit tests cover the data filter (JWT, K8s secrets, API keys, private keys) and atomic JSON I/O.
+
+## 🛡️ Production-Readiness Features
+
+- **Atomic JSON writes** — race-condition-proof storage via `os.replace()` + file locks
+- **SSH connection pooling** — reuses authenticated sessions for 5 min (eliminates handshake overhead)
+- **RAG singleton cache** — TF-IDF vectorizer loaded once per process
+- **Actionable error messages** — SSH errors map to specific remediations
+- **Password scrubbing** — SSH passwords cleared from memory after auth
+- **Input validation** — device names, IPs, hostnames, usernames, commands
+- **Startup validation** — warns if encryption key or auth hash is missing
+- **Destructive action confirmations** — delete buttons require double-click
+- **Log rotation** — automatic cleanup of logs older than 30 days
+- **Data filter** — masks JWT, K8s secrets, PGP keys, AWS/GCP/Azure credentials
+
 ## 📝 License
 
 MIT License

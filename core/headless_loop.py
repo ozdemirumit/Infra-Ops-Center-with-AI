@@ -72,8 +72,8 @@ def run_headless_loop(prompt: str, connections: dict, session_id: str):
     # RAG context
     if settings.RAG_ENABLED:
         try:
-            from core.rag_engine import RAGEngine
-            rag_context = RAGEngine().get_context_for_prompt(prompt)
+            from core.rag_engine import get_rag_engine
+            rag_context = get_rag_engine().get_context_for_prompt(prompt)
             if rag_context:
                 system_prompt += rag_context
         except Exception:

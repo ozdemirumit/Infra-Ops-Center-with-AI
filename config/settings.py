@@ -98,5 +98,52 @@ class Settings:
         from tools.registry import get_active_tools
         return get_active_tools()
 
+    def validate_startup(self) -> list[str]:
+        """
+        Validates critical environment variables at startup.
+        Returns a list of validation warnings/errors (empty if all good).
+        """
+        warnings = []
+
+        # Critical — app won't work without these
+        if not self.DEVICE_ENCRYPTION_KEY:
+            warnings.append(
+                "🔴 DEVICE_ENCRYPTION_KEY is not set. Device credentials cannot be decrypted. "
+                "Run `python setup_env.py` to generate one."
+            )
+
+        if not self.APP_PASSWORD_HASH:
+            warnings.append(
+                "🔴 APP_PASSWORD_HASH is not set. Anyone can access the app! "
+                "Run `python setup_env.py` to generate one."
+            )
+
+        # Provider — at least one must be configured
+        if self.PROXY_ENABLED:
+            if not self.PROXY_API_KEY:
+                warnings.append(
+                    "🟠 PROXY_ENABLED=true but PROXY_API_KEY is empty. "
+                    "AI calls will fail."
+                )
+        else:
+            has_direct_key = any([
+                self.ANTHROPIC_API_KEY,
+                self.OPENAI_API_KEY,
+                self.GEMINI_API_KEY,
+            ])
+            if not has_direct_key:
+                warnings.append(
+                    "🟠 No AI provider configured. Set at least one of: "
+                    "ANTHROPIC_API_KEY, OPENAI_API_KEY, GEMINI_API_KEY, "
+                    "or enable proxy with PROXY_ENABLED=true."
+                )
+
+        # Warnings (non-blocking)
+        if self.APP_USERNAME == "admin" and self.APP_PASSWORD_HASH:
+            # only warn if using default username with a real hash
+            pass  # acceptable default
+
+        return warnings
+
 
 settings = Settings()

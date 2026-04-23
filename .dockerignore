@@ -1,0 +1,47 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+venv/
+.venv/
+
+# Git
+.git/
+.gitignore
+.github/
+
+# IDE
+.vscode/
+.idea/
+.claude/
+.agents/
+
+# Runtime state
+logs/
+*.log
+monitor_state.json
+sessions/sessions.json
+devices/devices.json
+tools/tools_state.json
+knowledge_base/tfidf_index.pkl
+knowledge_base/runbooks/
+knowledge_base/session_memory/
+pending_tickets.json
+archived_tickets.json
+
+# Secrets
+.env
+
+# Documentation
+README.md
+*.md
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Tests
+tests/
+pytest.ini
+.pytest_cache/

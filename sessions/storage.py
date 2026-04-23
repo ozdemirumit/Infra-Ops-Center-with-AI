@@ -3,12 +3,12 @@ Session storage module.
 Each task gets an independent session with message history.
 """
 
-import json
 import uuid
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
 from logging_config.logger import get_logger
+from logging_config.atomic_io import atomic_read_json, atomic_write_json
 
 logger = get_logger("sessions")
 
@@ -21,21 +21,12 @@ STATUS_FAILED = "failed"
 
 
 def _load() -> list[dict]:
-    if not _SESSION_FILE.exists():
-        return []
-    try:
-        with open(_SESSION_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception as e:
-        logger.error(f"Failed to load sessions: {e}")
-        return []
+    return atomic_read_json(_SESSION_FILE, default=[])
 
 
 def _save(sessions: list[dict]):
     try:
-        _SESSION_FILE.parent.mkdir(parents=True, exist_ok=True)
-        with open(_SESSION_FILE, "w", encoding="utf-8") as f:
-            json.dump(sessions, f, indent=2, ensure_ascii=False, default=str)
+        atomic_write_json(_SESSION_FILE, sessions)
     except Exception as e:
         logger.error(f"Failed to save sessions: {e}")
 

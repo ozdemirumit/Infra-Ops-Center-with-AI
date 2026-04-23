@@ -34,11 +34,49 @@ st.markdown("Add, edit, or delete your servers and network devices. Passwords ar
 # --- REGISTERED DEVICES ---
 st.header("📋 Registered Devices")
 
-devices = DeviceStorage.list_all()
+all_devices = DeviceStorage.list_all()
 
-if not devices:
+if not all_devices:
     st.info("No registered devices yet. Use the form below to add a new device.")
 else:
+    # Search + type filter
+    col_search, col_filter, col_count = st.columns([3, 2, 1])
+    with col_search:
+        search = st.text_input(
+            "search", placeholder="🔍 Search by name, IP, hostname, role...",
+            label_visibility="collapsed",
+        ).strip().lower()
+    with col_filter:
+        type_filter = st.selectbox(
+            "type", ["All types"] + [f"{v.get('icon','')} {v.get('label', k)}" for k, v in dict(DEVICE_TYPES).items()],
+            label_visibility="collapsed",
+        )
+    with col_count:
+        st.metric("Total", len(all_devices), label_visibility="collapsed")
+
+    # Filter devices
+    devices = all_devices
+    if search:
+        devices = [
+            d for d in devices
+            if search in d["name"].lower()
+            or search in d["ip"].lower()
+            or search in d.get("hostname", "").lower()
+            or search in d.get("role", "").lower()
+        ]
+    if type_filter != "All types":
+        # Extract type key from label
+        for k, v in dict(DEVICE_TYPES).items():
+            if f"{v.get('icon','')} {v.get('label', k)}" == type_filter:
+                devices = [d for d in devices if d["type"] == k]
+                break
+
+    if not devices:
+        st.caption(f"No devices match filters.")
+
+    # Pending delete confirmation state
+    pending_delete = st.session_state.get("_pending_delete_device")
+
     for device in devices:
         dtype_info = DEVICE_TYPES.get(device["type"], {"label": device["type"], "icon": "❓"})
 
@@ -56,16 +94,31 @@ else:
                 if device.get("os"):
                     st.text(f"OS: {device['os']}")
             with col3:
-                # Edit button
                 if st.button(f"✏️ Edit", key=f"edit_{device['id']}", use_container_width=True):
                     st.session_state["editing_device"] = device["id"]
                     st.rerun()
 
-                # Delete button
-                if st.button(f"🗑️ Delete", key=f"del_{device['id']}", use_container_width=True, type="secondary"):
-                    DeviceStorage.delete(device["id"])
-                    st.success(f"✅ '{device['name']}' deleted.")
-                    st.rerun()
+                # Delete with confirmation
+                if pending_delete == device["id"]:
+                    st.warning(f"⚠️ Delete '{device['name']}'?")
+                    cc1, cc2 = st.columns(2)
+                    with cc1:
+                        if st.button("✅ Yes", key=f"confirm_del_{device['id']}",
+                                     use_container_width=True, type="primary"):
+                            DeviceStorage.delete(device["id"])
+                            st.session_state.pop("_pending_delete_device", None)
+                            st.success(f"Deleted '{device['name']}'.")
+                            st.rerun()
+                    with cc2:
+                        if st.button("❌ No", key=f"cancel_del_{device['id']}",
+                                     use_container_width=True, type="secondary"):
+                            st.session_state.pop("_pending_delete_device", None)
+                            st.rerun()
+                else:
+                    if st.button(f"🗑️ Delete", key=f"del_{device['id']}",
+                                 use_container_width=True, type="secondary"):
+                        st.session_state["_pending_delete_device"] = device["id"]
+                        st.rerun()
 
 st.divider()
 
@@ -142,9 +195,27 @@ with st.form("add_device_form", clear_on_submit=True):
     submitted = st.form_submit_button("➕ Add Device", use_container_width=True, type="primary")
 
     if submitted:
-        if not all([new_name, new_type, new_ip, new_user, new_pwd]):
-            st.error("❌ Please fill in all required fields (*).")
+        from core.validators import validate_device_name, validate_ip_or_hostname, validate_username
+
+        errors = []
+        ok, msg = validate_device_name(new_name)
+        if not ok:
+            errors.append(msg)
+        ok, msg = validate_ip_or_hostname(new_ip)
+        if not ok:
+            errors.append(msg)
+        ok, msg = validate_username(new_user)
+        if not ok:
+            errors.append(msg)
+        if not new_pwd:
+            errors.append("Password is required.")
+        if not new_type:
+            errors.append("Device type is required.")
+
+        if errors:
+            for err in errors:
+                st.error(f"❌ {err}")
         else:
             device_id = DeviceStorage.add(new_name, new_type, new_ip, new_user, new_pwd)
-            st.success(f"✅ '{new_name}' added successfully! Edit the device to enter detailed inventory information. (ID: {device_id})")
+            st.success(f"✅ '{new_name}' added successfully! (ID: {device_id})")
             st.rerun()

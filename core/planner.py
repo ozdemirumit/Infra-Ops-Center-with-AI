@@ -27,13 +27,18 @@ logger = get_logger("planner")
 
 # ─── Keywords ────────────────────────────────────────────────────────
 
-# If the task contains any of these keywords, it will be planned first
+# If the task contains any of these keywords, it will be planned first.
+# Keywords are in English (primary) and Turkish (for bilingual support).
 RISK_KEYWORDS = [
-    "sil", "durdur", "kapat", "yeniden başlat", "reboot", "shutdown",
-    "format", "remove", "delete", "drop", "truncate", "destroy",
+    # English
+    "reboot", "shutdown", "poweroff", "halt",
+    "format", "remove", "delete", "drop", "truncate", "destroy", "purge",
     "update", "upgrade", "install", "uninstall", "migrate",
-    "restart", "stop", "kill", "disable", "rm ", "poweroff",
-    "güncelle", "kur", "kaldır", "devre dışı",
+    "restart", "stop", "kill", "disable", "rm ",
+    "overwrite", "wipe", "reset", "revoke",
+    # Turkish (bilingual support)
+    "sil", "durdur", "kapat", "yeniden başlat", "güncelle",
+    "kur", "kaldır", "devre dışı", "biçimlendir",
 ]
 
 

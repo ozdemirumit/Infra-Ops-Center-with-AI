@@ -40,7 +40,22 @@ try:
 
     _start_monitor_scheduler()
 except Exception as _e:
-    pass  # Scheduler errors should not prevent the application from running
+    import logging
+    logging.getLogger("monitor").warning(
+        f"Monitor scheduler init failed — continuing without background monitoring: {_e}"
+    )
+
+# ── Log cleanup scheduler (daily) ──
+try:
+    @_st.cache_resource
+    def _start_log_cleanup():
+        from logging_config.log_cleanup import start_cleanup_scheduler
+        return start_cleanup_scheduler(interval_hours=24)
+
+    _start_log_cleanup()
+except Exception as _e:
+    import logging
+    logging.getLogger("cleanup").warning(f"Log cleanup scheduler init failed: {_e}")
 
 # --- Page Settings ---
 st.set_page_config(
@@ -55,6 +70,17 @@ css_path = os.path.join(os.path.dirname(__file__), "ui", "style.css")
 if os.path.exists(css_path):
     with open(css_path, "r", encoding="utf-8") as f:
         st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+
+# --- Startup validation ---
+_startup_warnings = settings.validate_startup()
+if _startup_warnings:
+    st.error("⚠️ **Configuration Issues Detected**")
+    for w in _startup_warnings:
+        st.warning(w)
+    st.info("💡 Run `python setup_env.py` to generate a valid configuration.")
+    # Critical (🔴) warnings block startup; 🟠 warnings allow continuing
+    if any(w.startswith("🔴") for w in _startup_warnings):
+        st.stop()
 
 # --- Authentication ---
 if not check_auth():
@@ -336,10 +362,19 @@ else:
                         st.rerun()
 
                 with col_delete:
-                    if st.button("🗑️", key=f"del_{sess['id']}", use_container_width=True, help="Delete task"):
-                        delete_session(sess["id"])
-                        if st.session_state.get("active_session_id") == sess["id"]:
-                            st.session_state.active_session_id = None
-                        st.rerun()
+                    pending_del = st.session_state.get("_pending_delete_session")
+                    if pending_del == sess["id"]:
+                        if st.button("✅", key=f"confirm_{sess['id']}", use_container_width=True,
+                                     type="primary", help="Confirm delete"):
+                            delete_session(sess["id"])
+                            st.session_state.pop("_pending_delete_session", None)
+                            if st.session_state.get("active_session_id") == sess["id"]:
+                                st.session_state.active_session_id = None
+                            st.rerun()
+                    else:
+                        if st.button("🗑️", key=f"del_{sess['id']}", use_container_width=True,
+                                     help="Delete task (click again to confirm)"):
+                            st.session_state["_pending_delete_session"] = sess["id"]
+                            st.rerun()
     else:
         st.info("💡 No tasks yet. Type your first task above to get started.")

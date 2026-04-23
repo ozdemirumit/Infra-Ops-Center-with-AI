@@ -14,34 +14,76 @@ logger = get_logger("proxy")
 # ============================================================
 
 # Sensitive data patterns to detect (regex)
+# Format: (label, pattern, replacement) or (label, pattern, replacement, flags)
 SENSITIVE_PATTERNS = [
-    # API Keys
+    # ── API Keys ──
     ("Anthropic API Key", r"sk-ant-api\d{2}-[A-Za-z0-9_\-]{40,}", "***API_KEY_MASKED***"),
-    ("Generic API Key", r"sk-[A-Za-z0-9]{20,}", "***API_KEY_MASKED***"),
+    ("OpenAI API Key", r"sk-proj-[A-Za-z0-9_\-]{20,}", "***API_KEY_MASKED***"),
+    ("Generic API Key", r"sk-[A-Za-z0-9_\-]{20,}", "***API_KEY_MASKED***"),
     ("API Key Assignment", r"api[_-]?key\s*[=:]\s*['\"]?([A-Za-z0-9_\-]{20,})['\"]?", "api_key=***MASKED***"),
+    ("Google API Key", r"AIza[0-9A-Za-z_\-]{35}", "***GOOGLE_API_KEY_MASKED***"),
+    ("GitHub Token", r"(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}", "***GITHUB_TOKEN_MASKED***"),
+    ("Slack Token", r"xox[baprs]-[A-Za-z0-9\-]{10,}", "***SLACK_TOKEN_MASKED***"),
+    ("Stripe Key", r"(sk|pk)_(test|live)_[A-Za-z0-9]{24,}", "***STRIPE_KEY_MASKED***"),
 
-    # Bearer / Authorization tokens
+    # ── JWT Tokens ──
+    ("JWT Token", r"eyJ[A-Za-z0-9_\-]+\.eyJ[A-Za-z0-9_\-]+\.[A-Za-z0-9_\-]+", "***JWT_MASKED***"),
+
+    # ── Bearer / Authorization tokens ──
     ("Bearer Token", r"(Bearer\s+)[A-Za-z0-9_\-\.]{20,}", r"\1***TOKEN_MASKED***"),
     ("Authorization Header", r"(Authorization:\s*)[^\s\n]{20,}", r"\1***AUTH_MASKED***"),
+    ("Basic Auth", r"Basic\s+[A-Za-z0-9+/]{20,}={0,2}", "Basic ***BASIC_AUTH_MASKED***"),
 
-    # Password patterns (in commands or configs)
+    # ── Passwords (various formats) ──
     ("Password", r"(password|passwd|pwd|şifre)\s*[=:]\s*['\"]?([^\s'\"\n]{3,})['\"]?",
      r"\1=***PASSWORD_MASKED***", re.IGNORECASE),
+    ("Password Property", r"(\w*\.password)\s*[=:]\s*['\"]?([^\s'\"\n]{3,})['\"]?",
+     r"\1=***PASSWORD_MASKED***", re.IGNORECASE),
 
-    # SSH/MySQL/PostgreSQL connection strings
-    ("Connection String", r"(mysql|postgres|ssh|ftp)://[^\s@]+:([^\s@]+)@",
+    # ── Connection strings ──
+    ("Connection String", r"(mysql|postgres|postgresql|mongodb|redis|ssh|ftp|sftp|amqp|amqps)://[^\s@]+:([^\s@]+)@",
      r"\1://***USER***:***PASS***@"),
+    ("JDBC URL", r"(jdbc:\w+://[^\s?]+)\?([^\s]*(?:password|pwd)=)([^\s&]+)",
+     r"\1?\2***MASKED***", re.IGNORECASE),
 
-    # Private key blocks
-    ("Private Key", r"-----BEGIN\s+(RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----[\s\S]*?-----END\s+(RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----",
+    # ── Private keys (all types) ──
+    ("Private Key",
+     r"-----BEGIN\s+(RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----[\s\S]*?-----END\s+(RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----",
      "***PRIVATE_KEY_MASKED***"),
+    ("PGP Private Key",
+     r"-----BEGIN\s+PGP\s+PRIVATE\s+KEY\s+BLOCK-----[\s\S]*?-----END\s+PGP\s+PRIVATE\s+KEY\s+BLOCK-----",
+     "***PGP_PRIVATE_KEY_MASKED***"),
+    ("SSH Private Key Body",
+     r"ssh-rsa\s+[A-Za-z0-9+/=]{100,}",
+     "ssh-rsa ***SSH_KEY_MASKED***"),
 
-    # AWS Access Key
+    # ── Cloud credentials ──
     ("AWS Access Key", r"AKIA[0-9A-Z]{16}", "***AWS_KEY_MASKED***"),
+    ("AWS Secret Key", r"aws_secret_access_key\s*[=:]\s*['\"]?([A-Za-z0-9/+=]{40})['\"]?",
+     "aws_secret_access_key=***AWS_SECRET_MASKED***", re.IGNORECASE),
+    ("Azure Storage Key", r"DefaultEndpointsProtocol=https;AccountName=[^;]+;AccountKey=[^;]+",
+     "***AZURE_STORAGE_KEY_MASKED***"),
+    ("GCP Service Account", r"\"private_key\"\s*:\s*\"-----BEGIN[^\"]+\"",
+     "\"private_key\": \"***GCP_KEY_MASKED***\""),
 
-    # Values in .env files (KEY=value format, very common sensitive data)
-    ("Env Secret", r"(ANTHROPIC_API_KEY|OPENAI_API_KEY|SECRET_KEY|ENCRYPTION_KEY|DB_PASSWORD)\s*=\s*([^\s\n]+)",
+    # ── Kubernetes secrets (base64) ──
+    ("K8s Secret Token",
+     r"(token|password|ca\.crt|tls\.key|\.dockerconfigjson)\s*:\s*([A-Za-z0-9+/]{40,}={0,2})",
+     r"\1: ***K8S_SECRET_MASKED***", re.IGNORECASE),
+
+    # ── Docker credentials ──
+    ("Docker Auth", r"\"auth\"\s*:\s*\"[A-Za-z0-9+/=]{20,}\"",
+     "\"auth\": \"***DOCKER_AUTH_MASKED***\""),
+
+    # ── Generic base64 secrets (long strings likely to be secrets) ──
+    # ── .env file secret assignments (general) ──
+    ("Env Secret",
+     r"(ANTHROPIC_API_KEY|OPENAI_API_KEY|GEMINI_API_KEY|SECRET_KEY|ENCRYPTION_KEY|DEVICE_ENCRYPTION_KEY|DB_PASSWORD|APP_PASSWORD_HASH|PROXY_API_KEY|GITHUB_TOKEN|GITLAB_TOKEN|DOCKER_PASSWORD)\s*=\s*([^\s\n]+)",
      r"\1=***MASKED***"),
+
+    # ── Credit card numbers (PAN) ──
+    ("Credit Card", r"\b(?:4\d{3}|5[1-5]\d{2}|3[47]\d{2}|6011)[-\s]?\d{4}[-\s]?\d{4}[-\s]?\d{4}\b",
+     "***CREDIT_CARD_MASKED***"),
 ]
 
 # Compiled regexes (compiled once for performance)

@@ -35,8 +35,11 @@ def _get_dynamic_device_types() -> dict:
         dt = get_device_types()
         if dt:
             return dt
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger("devices").debug(
+            f"Falling back to default device types (registry unavailable): {e}"
+        )
     return _FALLBACK_DEVICE_TYPES
 
 
@@ -104,30 +107,29 @@ def _encrypt(text: str) -> str:
 
 
 def _decrypt(token: str) -> str:
-    """Decrypts encrypted text."""
+    """Decrypts encrypted text. Returns empty string on failure (logged)."""
     if not token:
         return ""
     try:
         return _get_cipher().decrypt(token.encode()).decode()
-    except Exception:
+    except Exception as e:
+        import logging
+        logging.getLogger("devices").warning(
+            f"Decryption failed (key mismatch or corrupt data): {type(e).__name__}"
+        )
         return ""
 
 
 def _load_devices() -> list:
-    """Loads the device list from the JSON file."""
-    if not DEVICES_FILE.exists():
-        return []
-    try:
-        with open(DEVICES_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except (json.JSONDecodeError, IOError):
-        return []
+    """Loads the device list from the JSON file (atomic read)."""
+    from logging_config.atomic_io import atomic_read_json
+    return atomic_read_json(DEVICES_FILE, default=[])
 
 
 def _save_devices(devices: list):
-    """Writes the device list to the JSON file."""
-    with open(DEVICES_FILE, "w", encoding="utf-8") as f:
-        json.dump(devices, f, ensure_ascii=False, indent=2)
+    """Writes the device list to the JSON file (atomic write)."""
+    from logging_config.atomic_io import atomic_write_json
+    atomic_write_json(DEVICES_FILE, devices)
 
 
 class DeviceStorage:

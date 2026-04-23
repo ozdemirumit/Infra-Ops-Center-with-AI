@@ -64,17 +64,15 @@ _BUILTIN_DEVICE_TYPES: dict[str, dict] = {
 # ═══════════════════════════════════════════════════════════════════
 
 def _load_state() -> dict:
-    """Read the tools_state.json file."""
-    if _STATE_FILE.exists():
-        with open(_STATE_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    return {}
+    """Read the tools_state.json file (atomic)."""
+    from logging_config.atomic_io import atomic_read_json
+    return atomic_read_json(_STATE_FILE, default={})
 
 
 def _save_state(state: dict) -> None:
-    """Write to tools_state.json file."""
-    with open(_STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump(state, f, indent=2, ensure_ascii=False)
+    """Write to tools_state.json file (atomic)."""
+    from logging_config.atomic_io import atomic_write_json
+    atomic_write_json(_STATE_FILE, state)
 
 
 def _ensure_state() -> dict:

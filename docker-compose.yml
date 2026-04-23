@@ -1,0 +1,52 @@
+version: '3.8'
+
+services:
+  infra-ops:
+    build: .
+    container_name: infra-ops-center
+    restart: unless-stopped
+    ports:
+      - "8501:8501"
+    environment:
+      # AI Provider
+      - DEFAULT_PROVIDER=${DEFAULT_PROVIDER:-anthropic}
+      - DEFAULT_MODEL=${DEFAULT_MODEL:-claude-sonnet-4-5}
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+
+      # Proxy (optional)
+      - PROXY_ENABLED=${PROXY_ENABLED:-false}
+      - PROXY_HOST=${PROXY_HOST:-localhost}
+      - PROXY_PORT=${PROXY_PORT:-8765}
+      - PROXY_API_KEY=${PROXY_API_KEY:-}
+
+      # Auth
+      - APP_USERNAME=${APP_USERNAME:-admin}
+      - APP_PASSWORD_HASH=${APP_PASSWORD_HASH}
+      - ADMIN_USERS=${ADMIN_USERS:-admin}
+
+      # Encryption
+      - DEVICE_ENCRYPTION_KEY=${DEVICE_ENCRYPTION_KEY}
+
+      # SSH
+      - SSH_TIMEOUT=${SSH_TIMEOUT:-20}
+      - SSH_EXEC_TIMEOUT=${SSH_EXEC_TIMEOUT:-1800}
+
+      # RAG
+      - RAG_ENABLED=${RAG_ENABLED:-true}
+    volumes:
+      # Persist runtime state
+      - ./devices/devices.json:/app/devices/devices.json
+      - ./sessions/sessions.json:/app/sessions/sessions.json
+      - ./tools/tools_state.json:/app/tools/tools_state.json
+      - ./monitor_state.json:/app/monitor_state.json
+      - ./logs:/app/logs
+      - ./knowledge_base:/app/knowledge_base
+      - ./tools/custom:/app/tools/custom
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s

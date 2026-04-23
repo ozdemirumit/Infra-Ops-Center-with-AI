@@ -164,8 +164,8 @@ def run_agent_loop(prompt: str, connections: dict, session_id: str = None):
     rag_context = ""
     if settings.RAG_ENABLED:
         try:
-            from core.rag_engine import RAGEngine
-            rag_context = RAGEngine().get_context_for_prompt(prompt)
+            from core.rag_engine import get_rag_engine
+            rag_context = get_rag_engine().get_context_for_prompt(prompt)
         except Exception:
             pass
 
@@ -215,11 +215,13 @@ def run_agent_loop(prompt: str, connections: dict, session_id: str = None):
                 current_messages = st.session_state.messages + turn_messages
 
                 from tools.registry import get_active_tools
-                response = proxy.chat(
-                    messages=current_messages,
-                    tools=get_active_tools(),
-                    system=system_prompt,
-                )
+                _spinner_msg = f"💭 Thinking (step {step}/{settings.MAX_AGENT_STEPS})…"
+                with st.spinner(_spinner_msg):
+                    response = proxy.chat(
+                        messages=current_messages,
+                        tools=get_active_tools(),
+                        system=system_prompt,
+                    )
 
                 assistant_message = {"role": "assistant", "content": []}
                 tool_uses_this_turn = []
@@ -294,11 +296,20 @@ def run_agent_loop(prompt: str, connections: dict, session_id: str = None):
                         break  # for loop — wait for approval
 
                     else:
-                        # Normal command
-                        with st.status(f"{icon} {tu.name} → `{command_text}`", expanded=True):
+                        # Normal command — show expanding status with progress
+                        status_label = f"{icon} {tu.name} → `{command_text[:80]}`"
+                        with st.status(status_label, expanded=True, state="running") as _status:
+                            st.caption("⏳ Executing…")
                             raw_result = _dispatch_tool(tu.name, tu.input, connections)
                             result = proxy.filter_ssh_output(raw_result)
                             st.code(result, language="bash")
+                            # Final state
+                            success = not (result.startswith("❌") or "error" in result.lower()[:50])
+                            _status.update(
+                                label=f"{icon} {tu.name} {'✓' if success else '✗'} `{command_text[:60]}`",
+                                state="complete" if success else "error",
+                                expanded=success is False,
+                            )
 
                         tool_results.append({
                             "type": "tool_result",

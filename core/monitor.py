@@ -97,30 +97,30 @@ class MonitorState:
 # ─── Storage ────────────────────────────────────────────────────────
 
 def load_state() -> MonitorState:
+    from logging_config.atomic_io import atomic_read_json
+
     if not _STATE_FILE.exists():
         return _init_default_state()
-    try:
-        with open(_STATE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
 
-        state = MonitorState()
-        state.scheduler_running = data.get("scheduler_running", False)
-        state.checks_config = data.get("checks_config", {})
-        state.results = data.get("results", [])
-
-        # Add default metrics if missing from config
-        changed = False
-        for hc in DEFAULT_HEALTH_CHECKS:
-            if hc["name"] not in state.checks_config:
-                state.checks_config[hc["name"]] = _check_to_config(hc)
-                changed = True
-        if changed:
-            save_state(state)
-
-        return state
-    except Exception as e:
-        logger.error(f"Failed to read monitor state: {e}")
+    data = atomic_read_json(_STATE_FILE, default=None)
+    if data is None:
         return _init_default_state()
+
+    state = MonitorState()
+    state.scheduler_running = data.get("scheduler_running", False)
+    state.checks_config = data.get("checks_config", {})
+    state.results = data.get("results", [])
+
+    # Add default metrics if missing from config
+    changed = False
+    for hc in DEFAULT_HEALTH_CHECKS:
+        if hc["name"] not in state.checks_config:
+            state.checks_config[hc["name"]] = _check_to_config(hc)
+            changed = True
+    if changed:
+        save_state(state)
+
+    return state
 
 
 def _init_default_state() -> MonitorState:
@@ -149,15 +149,14 @@ def _check_to_config(hc: dict) -> dict:
 
 
 def save_state(state: MonitorState):
+    from logging_config.atomic_io import atomic_write_json
     try:
-        _STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "scheduler_running": state.scheduler_running,
             "checks_config": state.checks_config,
             "results": [asdict(r) if not isinstance(r, dict) else r for r in state.results],
         }
-        with open(_STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(data, f, indent=2, ensure_ascii=False)
+        atomic_write_json(_STATE_FILE, data)
     except Exception as e:
         logger.error(f"Failed to save monitor state: {e}")
 

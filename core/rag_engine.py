@@ -22,6 +22,26 @@ logger = get_logger("rag_engine")
 _META_FILENAME = "doc_metadata.json"
 _INDEX_FILENAME = "tfidf_index.pkl"
 
+# Singleton cache — loads vectorizer once per process
+_rag_singleton = None
+
+
+def get_rag_engine():
+    """
+    Returns a cached RAGEngine singleton.
+    The TF-IDF vectorizer is large (pickle) — loading it once saves ~500ms per query.
+    """
+    global _rag_singleton
+    if _rag_singleton is None:
+        _rag_singleton = RAGEngine()
+    return _rag_singleton
+
+
+def invalidate_rag_cache():
+    """Force the next get_rag_engine() call to create a fresh instance (after re-indexing)."""
+    global _rag_singleton
+    _rag_singleton = None
+
 
 class RAGEngine:
     """
