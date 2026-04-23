@@ -1,5 +1,5 @@
 """
-Sidebar — Enterprise control panel.
+Sidebar — Modern enterprise control panel.
 """
 
 import streamlit as st
@@ -12,23 +12,45 @@ def render_sidebar() -> dict:
     with st.sidebar:
         # Brand header
         st.markdown(
-            "<div style='padding: 0.25rem 0 0.5rem 0.25rem; font-weight: 700; "
-            "font-size: 0.95rem; color: #e4e7ec; letter-spacing: -0.01em;'>"
-            "🛡️ Infra Ops Center</div>",
+            """
+            <div style='padding: 0.25rem 0 0.75rem 0.25rem;
+                        display: flex; align-items: center; gap: 8px;
+                        border-bottom: 1px solid rgba(255,255,255,0.05);
+                        margin-bottom: 0.75rem;'>
+                <span style='font-size: 1.25rem;'>🛡️</span>
+                <span style='font-weight: 700; font-size: 0.95rem;
+                             color: #f1f5f9; letter-spacing: -0.01em;'>
+                    Infra Ops Center
+                </span>
+            </div>
+            """,
             unsafe_allow_html=True,
         )
 
+        # User info
         user = get_current_user()
-        role = "⚡ Admin" if is_admin() else "👁️ Viewer"
-        st.caption(f"{role} · `{user}`")
+        role_icon = "⚡" if is_admin() else "👁️"
+        role_text = "Admin" if is_admin() else "Viewer"
 
-        if st.button("🚪 Logout", use_container_width=True):
+        st.markdown(
+            f"""
+            <div style='padding: 0.4rem 0.6rem; background: rgba(255,255,255,0.03);
+                        border: 1px solid rgba(255,255,255,0.06); border-radius: 8px;
+                        margin-bottom: 0.5rem; font-size: 0.8rem;'>
+                <div style='color: #a8b3c5;'>{role_icon} <strong>{user}</strong></div>
+                <div style='color: #6b7690; font-size: 0.7rem; margin-top: 2px;'>{role_text}</div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+        if st.button("🚪 Sign Out", use_container_width=True, type="secondary"):
             logout()
 
         st.divider()
 
         # AI Model
-        st.markdown("##### 🤖 AI Model")
+        st.markdown("##### AI Model")
 
         PROVIDER_MODELS = {
             "anthropic": ["claude-opus-4-5", "claude-sonnet-4-5", "claude-3-5-haiku-latest"],
@@ -63,21 +85,21 @@ def render_sidebar() -> dict:
         st.divider()
 
         # Controls
-        st.markdown("##### ⚙️ Controls")
+        st.markdown("##### Controls")
 
         if "planning_enabled" not in st.session_state:
             st.session_state.planning_enabled = True
         st.session_state.planning_enabled = st.toggle(
-            "🗺️ ReAct Planning", value=st.session_state.planning_enabled, key="planning_toggle",
+            "🗺️  ReAct Planning", value=st.session_state.planning_enabled, key="planning_toggle",
         )
-        st.toggle("🔒 Command Approval", value=True, key="change_approval_toggle")
+        st.toggle("🔒  Command Approval", value=True, key="change_approval_toggle")
 
         st.divider()
 
         # Proxy Stats
         if "proxy_stats" in st.session_state:
             stats = st.session_state.proxy_stats
-            st.markdown("##### 📊 Proxy Stats")
+            st.markdown("##### Stats")
             c1, c2 = st.columns(2)
             c1.metric("Requests", stats["total_requests"])
             c2.metric("Errors", stats["errors"])
@@ -85,7 +107,7 @@ def render_sidebar() -> dict:
                 st.caption(f"Last: {stats['last_request_time']}")
             st.divider()
 
-        if st.button("🧹 Clear Chat", use_container_width=True):
+        if st.button("🧹  Clear Chat", use_container_width=True, type="secondary"):
             st.session_state.messages = []
             st.rerun()
 

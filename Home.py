@@ -67,7 +67,21 @@ connections = render_sidebar()
 if "messages" not in st.session_state:
     st.session_state.messages = []
 
-st.title("🛡️ Infra Ops Center with AI")
+st.markdown(
+    """
+    <h1 style='background: linear-gradient(135deg, #5b8def 0%, #a78bfa 100%);
+               -webkit-background-clip: text;
+               -webkit-text-fill-color: transparent;
+               background-clip: text;
+               font-weight: 800;
+               font-size: 2.25rem;
+               letter-spacing: -0.03em;
+               margin-bottom: 0.25rem;'>
+        🛡️ Infra Ops Center
+    </h1>
+    """,
+    unsafe_allow_html=True,
+)
 
 # ────────────────────────────────────────────────────────────────────
 # SESSION MANAGEMENT
@@ -229,9 +243,17 @@ if active_session and active_session.get("status") in (STATUS_ACTIVE, STATUS_COM
 
 # ── No active session: Task selector ──
 else:
-    # Hero
+    # Hero section
     st.markdown(
-        "Give commands in natural language — AI will connect to your servers and complete the task."
+        """
+        <div style='text-align: left; margin-bottom: 1.5rem;'>
+            <p style='color: #a8b3c5; font-size: 1.05rem; line-height: 1.6; max-width: 720px; margin-top: 0.5rem;'>
+                Give commands in natural language — your AI operator will connect to servers via
+                SSH, HTTP or REST and complete the task autonomously.
+            </p>
+        </div>
+        """,
+        unsafe_allow_html=True,
     )
 
     # Quick status
@@ -240,24 +262,33 @@ else:
         from devices.storage import DeviceStorage
         total_devices = sum(len(DeviceStorage.get_by_type(dt)) for dt in dict(DEVICE_TYPES))
         total_tools = len(get_active_tools())
-        c1, c2, c3 = st.columns(3)
+        total_tasks = len(list_sessions(limit=100))
+        active_tasks = sum(1 for s in list_sessions(limit=100) if s.get("status") == STATUS_ACTIVE)
+
+        c1, c2, c3, c4 = st.columns(4)
         c1.metric("🖥️ Devices", total_devices)
         c2.metric("🔧 Active Tools", total_tools)
-        c3.metric("📋 Tasks", len(list_sessions(limit=100)))
+        c3.metric("📋 Total Tasks", total_tasks)
+        c4.metric("⚡ Active", active_tasks)
     except Exception:
         pass
 
-    st.divider()
+    st.write("")
 
-    # New task
-    st.markdown("##### 🚀 New Task")
-    with st.form("new_session_form", clear_on_submit=True):
-        task_title = st.text_input(
-            "What would you like to do?",
-            placeholder="E.g.: Update servers, check disk, list VMs, take backup...",
-            label_visibility="collapsed",
-        )
-        submitted = st.form_submit_button("🚀 Start Task", use_container_width=True, type="primary")
+    # New task — clean card
+    with st.container(border=True):
+        st.markdown("##### 🚀 Start a New Task")
+        with st.form("new_session_form", clear_on_submit=True):
+            task_title = st.text_input(
+                "task_input",
+                placeholder="E.g. Update all Linux servers · Check disk usage · List running VMs...",
+                label_visibility="collapsed",
+            )
+            submitted = st.form_submit_button(
+                "▶️ Launch Task",
+                use_container_width=True,
+                type="primary"
+            )
 
     if submitted and task_title.strip():
         new_session = create_session(task_title.strip(), connections)
@@ -268,32 +299,47 @@ else:
     # Previous tasks
     sessions = list_sessions(limit=30)
     if sessions:
-        st.divider()
-        st.markdown("##### 📋 Previous Tasks")
+        st.write("")
+        st.markdown("##### 📋 Recent Tasks")
 
         for sess in sessions:
-            badge = status_badge(sess["status"])
+            status = sess.get("status", "unknown")
+            badge = status_badge(status)
             created = sess["created_at"][:16] if "created_at" in sess else ""
+            title = sess.get("title", "Untitled")
+
+            # Status colors for left accent
+            status_colors = {
+                STATUS_ACTIVE: "#5b8def",
+                STATUS_COMPLETED: "#10b981",
+                STATUS_FAILED: "#ef4444",
+            }
+            accent = status_colors.get(status, "#6b7690")
 
             with st.container(border=True):
-                col_info, col_devam, col_sil = st.columns([5, 1, 1])
+                col_info, col_continue, col_delete = st.columns([7, 1.4, 0.7])
 
                 with col_info:
-                    st.markdown(f"**{sess['title']}**")
-                    st.caption(f"{badge} · {created}")
+                    st.markdown(
+                        f"<div style='border-left: 3px solid {accent}; padding-left: 12px;'>"
+                        f"<div style='font-weight: 600; font-size: 0.95rem; color: #f1f5f9; margin-bottom: 4px;'>{title}</div>"
+                        f"<div style='font-size: 0.75rem; color: #6b7690;'>{badge} · {created}</div>"
+                        f"</div>",
+                        unsafe_allow_html=True,
+                    )
 
-                with col_devam:
-                    btn_label = "▶️ Continue" if sess["status"] == STATUS_ACTIVE else "👁️ View"
+                with col_continue:
+                    btn_label = "▶️ Continue" if status == STATUS_ACTIVE else "👁️ View"
                     if st.button(btn_label, key=f"open_{sess['id']}", use_container_width=True):
                         st.session_state.active_session_id = sess["id"]
                         st.session_state.messages = []
                         st.rerun()
 
-                with col_sil:
-                    if st.button("🗑️", key=f"del_{sess['id']}", use_container_width=True):
+                with col_delete:
+                    if st.button("🗑️", key=f"del_{sess['id']}", use_container_width=True, help="Delete task"):
                         delete_session(sess["id"])
                         if st.session_state.get("active_session_id") == sess["id"]:
                             st.session_state.active_session_id = None
                         st.rerun()
     else:
-        st.info("No tasks created yet. Start a new task above.")
+        st.info("💡 No tasks yet. Type your first task above to get started.")
