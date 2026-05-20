@@ -378,7 +378,8 @@ with tab_generate:
                 # Status widget with progress
                 with st.status(f"📄 Processing **{uploaded_doc.name}** ({file_size/1024/1024:.1f} MB)…", expanded=True) as status:
                     progress_placeholder = st.empty()
-                    progress_bar = None
+                    # Use a mutable container — module-level scope can't use `nonlocal`
+                    _pb = {"bar": None}
                     suffix = "." + uploaded_doc.name.rsplit(".", 1)[-1].lower()
 
                     with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
@@ -386,11 +387,10 @@ with tab_generate:
                         tmp_path = tmp.name
 
                     def _on_progress(current, total):
-                        nonlocal progress_bar
-                        if progress_bar is None:
-                            progress_bar = progress_placeholder.progress(0, text=f"Reading pages…")
+                        if _pb["bar"] is None:
+                            _pb["bar"] = progress_placeholder.progress(0, text="Reading pages…")
                         pct = min(int(current / total * 100), 100) if total else 0
-                        progress_bar.progress(pct, text=f"Reading page {current} / {total}")
+                        _pb["bar"].progress(pct, text=f"Reading page {current} / {total}")
 
                     try:
                         start = _time.time()
