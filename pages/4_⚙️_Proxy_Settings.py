@@ -116,10 +116,24 @@ with tab_proxy:
         )
     with c3:
         pm_api_key = st.text_input(
-            "Bearer Token", value=settings.PROXY_API_KEY,
+            "Bearer Token (client)", value=settings.PROXY_API_KEY,
             type="password", key="cfg_proxy_key",
             placeholder="sk-proxy-...",
+            help="Used for chat completions, model list, etc.",
         )
+
+    # Admin token (optional) — needed to see custom provider endpoints
+    pm_admin_key = st.text_input(
+        "Admin API Key (optional)",
+        value=settings.PROXY_ADMIN_KEY,
+        type="password", key="cfg_proxy_admin_key",
+        placeholder="sk-proxy-admin-... (only required to see custom providers)",
+        help=(
+            "LLM Sentinel's /v1/providers and /v1/aliases endpoints require admin role. "
+            "Provide an admin token here to enable discovery of custom providers like 'Heimdal'. "
+            "If left blank, only standard cloud providers will appear in the model dropdown."
+        ),
+    )
 
     col_save, col_test, _ = st.columns([1, 1, 2])
     with col_save:
@@ -130,6 +144,7 @@ with tab_proxy:
                     "PROXY_HOST": pm_host,
                     "PROXY_PORT": str(int(pm_port)),
                     "PROXY_API_KEY": pm_api_key,
+                    "PROXY_ADMIN_KEY": pm_admin_key,
                 })
                 from proxy.model_discovery import invalidate_cache
                 invalidate_cache()
@@ -161,6 +176,10 @@ with tab_proxy:
             try:
                 base = f"http://{pm_host}:{int(pm_port)}"
                 headers = {"Authorization": f"Bearer {pm_api_key}"} if pm_api_key else {}
+                admin_headers = (
+                    {"Authorization": f"Bearer {pm_admin_key}"}
+                    if pm_admin_key else headers
+                )
 
                 # Try /v1/models
                 models_data = None
@@ -195,7 +214,7 @@ with tab_proxy:
 
                 # Show aliases
                 try:
-                    r = httpx.get(f"{base}/v1/aliases", headers=headers, timeout=5.0)
+                    r = httpx.get(f"{base}/v1/aliases", headers=admin_headers, timeout=5.0)
                     if r.status_code == 200:
                         aliases = r.json()
                         if isinstance(aliases, list) and aliases:
@@ -205,9 +224,14 @@ with tab_proxy:
                 except Exception:
                     pass
 
-                # Show providers
+                # Show providers (admin endpoint)
                 try:
-                    r = httpx.get(f"{base}/v1/providers", headers=headers, timeout=5.0)
+                    r = httpx.get(f"{base}/v1/providers", headers=admin_headers, timeout=5.0)
+                    if r.status_code == 403:
+                        st.warning(
+                            "🔒 `/v1/providers` requires admin role. "
+                            "Set the **Admin API Key** above to see custom providers like Heimdal."
+                        )
                     if r.status_code == 200:
                         provs = r.json()
                         provs_list = provs if isinstance(provs, list) else provs.get("providers", [])
@@ -236,10 +260,15 @@ with tab_proxy:
                 "inspect the raw responses below and share them so the parser can be updated."
             )
 
+            # Mapping: which endpoints need admin token
+            admin_endpoints = {"/v1/providers", "/v1/aliases"}
             for endpoint in ["/v1/models", "/v1/providers", "/v1/aliases", "/health"]:
+                use_admin = endpoint in admin_endpoints
+                h = admin_headers if use_admin else headers
+                label_suffix = " *(admin)*" if use_admin and admin_headers != headers else ""
                 try:
-                    r = httpx.get(f"{base}{endpoint}", headers=headers, timeout=5.0)
-                    st.markdown(f"**GET {endpoint}** → HTTP {r.status_code}")
+                    r = httpx.get(f"{base}{endpoint}", headers=h, timeout=5.0)
+                    st.markdown(f"**GET {endpoint}**{label_suffix} → HTTP {r.status_code}")
                     try:
                         data = r.json()
                         st.json(data)
@@ -248,9 +277,9 @@ with tab_proxy:
                 except Exception as e:
                     st.markdown(f"**GET {endpoint}** → ❌ {type(e).__name__}: {e}")
 
-            # Try to discover per-provider model endpoints
+            # Try to discover per-provider model endpoints (also admin)
             try:
-                r = httpx.get(f"{base}/v1/providers", headers=headers, timeout=5.0)
+                r = httpx.get(f"{base}/v1/providers", headers=admin_headers, timeout=5.0)
                 if r.status_code == 200:
                     data = r.json()
                     plist = data if isinstance(data, list) else data.get("providers", data.get("data", []))
@@ -261,7 +290,7 @@ with tab_proxy:
                                 if pname:
                                     try:
                                         r2 = httpx.get(f"{base}/v1/providers/{pname}/models",
-                                                       headers=headers, timeout=5.0)
+                                                       headers=admin_headers, timeout=5.0)
                                         st.markdown(f"**GET /v1/providers/{pname}/models** → HTTP {r2.status_code}")
                                         try:
                                             st.json(r2.json())

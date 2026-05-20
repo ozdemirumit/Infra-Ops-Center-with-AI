@@ -100,26 +100,32 @@ def _extract_model_name(item) -> str:
     return ""
 
 
-def _fetch_proxy_models(base_url: str = None, api_key: str = None, timeout: float = 5.0) -> dict[str, list[str]]:
+def _fetch_proxy_models(base_url: str = None, api_key: str = None, admin_key: str = None, timeout: float = 5.0) -> dict[str, list[str]]:
     """
     Query LLM Sentinel proxy for available models grouped by provider.
 
     Calls multiple endpoints — each proxy implementation exposes things differently:
-      • GET /v1/models                       (OpenAI-compatible list)
-      • GET /v1/providers                    (custom provider definitions)
+      • GET /v1/models                       (OpenAI-compatible list — client token)
+      • GET /v1/providers                    (custom provider definitions — admin token required)
       • GET /v1/providers/{name}/models      (per-provider model list)
-      • GET /v1/aliases                      (model aliases)
+      • GET /v1/aliases                      (model aliases — admin token required)
+
+    Args:
+        api_key:    Client Bearer token (for /v1/models)
+        admin_key:  Admin role token (for /v1/providers, /v1/aliases). Falls back to api_key.
 
     Returns {provider_name: [model, ...]}
     Custom proxy-defined providers (e.g. "Heimdal") appear as their own entries.
     """
     base = (base_url or f"http://{settings.PROXY_HOST}:{settings.PROXY_PORT}").rstrip("/")
     key = api_key or settings.PROXY_API_KEY
+    akey = admin_key or settings.PROXY_ADMIN_KEY or key  # Fall back to client key if no admin key
 
     if not key:
         return {}
 
     headers = {"Authorization": f"Bearer {key}"}
+    admin_headers = {"Authorization": f"Bearer {akey}"} if akey else headers
     grouped: dict[str, list[str]] = {}
 
     # ─── 1. /v1/models — OpenAI-compatible list ───
@@ -162,10 +168,16 @@ def _fetch_proxy_models(base_url: str = None, api_key: str = None, timeout: floa
     except Exception as e:
         logger.debug(f"Proxy /v1/models error: {type(e).__name__}: {e}")
 
-    # ─── 2. /v1/providers — custom proxy provider definitions ───
+    # ─── 2. /v1/providers — custom proxy provider definitions (admin endpoint) ───
     providers_seen = []
     try:
-        resp = httpx.get(f"{base}/v1/providers", headers=headers, timeout=timeout)
+        resp = httpx.get(f"{base}/v1/providers", headers=admin_headers, timeout=timeout)
+        if resp.status_code == 403:
+            logger.warning(
+                "Proxy /v1/providers requires admin role. "
+                "Set PROXY_ADMIN_KEY in .env or Proxy Settings page to enable "
+                "custom provider discovery (e.g. 'Heimdal' will be missing without admin token)."
+            )
         if resp.status_code == 200:
             data = resp.json()
             logger.debug(f"Proxy /v1/providers raw: {str(data)[:500]}")
@@ -217,7 +229,7 @@ def _fetch_proxy_models(base_url: str = None, api_key: str = None, timeout: floa
                         try:
                             r2 = httpx.get(
                                 f"{base}/v1/providers/{pname}/models",
-                                headers=headers, timeout=timeout,
+                                headers=admin_headers, timeout=timeout,
                             )
                             if r2.status_code == 200:
                                 pdata = r2.json()
@@ -241,7 +253,7 @@ def _fetch_proxy_models(base_url: str = None, api_key: str = None, timeout: floa
 
     # ─── 3. /v1/aliases — model aliases ───
     try:
-        resp = httpx.get(f"{base}/v1/aliases", headers=headers, timeout=timeout)
+        resp = httpx.get(f"{base}/v1/aliases", headers=admin_headers, timeout=timeout)
         if resp.status_code == 200:
             data = resp.json()
             aliases_list = None

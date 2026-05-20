@@ -19,6 +19,7 @@ class Settings:
     PROXY_HOST: str = os.getenv("PROXY_HOST", "localhost")
     PROXY_PORT: int = int(os.getenv("PROXY_PORT", "8765"))
     PROXY_API_KEY: str = os.getenv("PROXY_API_KEY", "")
+    PROXY_ADMIN_KEY: str = os.getenv("PROXY_ADMIN_KEY", "")  # Admin role token (optional, for /v1/providers, /v1/aliases)
     PROXY_ENABLED: bool = os.getenv("PROXY_ENABLED", "true").lower() == "true"
 
     # --- Direct API keys (used when proxy is disabled) ---
