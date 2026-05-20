@@ -21,5 +21,8 @@ beautifulsoup4>=4.12.0
 
 APScheduler>=3.10.0
 
+# LDAP / Active Directory authentication
+ldap3>=2.9.1
+
 # Dev / test (optional)
 # pytest>=7.0.0
