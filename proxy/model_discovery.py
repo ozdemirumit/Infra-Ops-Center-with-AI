@@ -89,17 +89,29 @@ def _fetch_ollama_models(base_url: str = None, timeout: float = 5.0) -> list[str
 
 # ─── Proxy Discovery ─────────────────────────────────────────────────
 
+def _extract_model_name(item) -> str:
+    """Extract model name/id from a string or dict (multiple field name variants)."""
+    if isinstance(item, str):
+        return item
+    if isinstance(item, dict):
+        for field in ("id", "name", "model", "model_name", "model_id", "default_model"):
+            if item.get(field):
+                return str(item[field])
+    return ""
+
+
 def _fetch_proxy_models(base_url: str = None, api_key: str = None, timeout: float = 5.0) -> dict[str, list[str]]:
     """
     Query LLM Sentinel proxy for available models grouped by provider.
 
-    Tries multiple endpoints (proxies expose models differently):
-      1. GET /v1/models                 (OpenAI-compatible list)
-      2. GET /v1/providers              (custom provider definitions)
-      3. GET /v1/aliases                (model aliases)
+    Calls multiple endpoints — each proxy implementation exposes things differently:
+      • GET /v1/models                       (OpenAI-compatible list)
+      • GET /v1/providers                    (custom provider definitions)
+      • GET /v1/providers/{name}/models      (per-provider model list)
+      • GET /v1/aliases                      (model aliases)
 
-    Returns {"anthropic": [...], "openai": [...], "ollama": [...], "custom-foo": [...]}.
-    Models from /v1/aliases are prefixed with [alias] in the list.
+    Returns {provider_name: [model, ...]}
+    Custom proxy-defined providers (e.g. "Heimdal") appear as their own entries.
     """
     base = (base_url or f"http://{settings.PROXY_HOST}:{settings.PROXY_PORT}").rstrip("/")
     key = api_key or settings.PROXY_API_KEY
@@ -110,78 +122,153 @@ def _fetch_proxy_models(base_url: str = None, api_key: str = None, timeout: floa
     headers = {"Authorization": f"Bearer {key}"}
     grouped: dict[str, list[str]] = {}
 
-    # 1. /v1/models — main model list
+    # ─── 1. /v1/models — OpenAI-compatible list ───
     try:
         resp = httpx.get(f"{base}/v1/models", headers=headers, timeout=timeout)
-        resp.raise_for_status()
-        data = resp.json()
+        if resp.status_code == 200:
+            data = resp.json()
+            logger.debug(f"Proxy /v1/models raw: {str(data)[:300]}")
 
-        if isinstance(data, dict) and "data" in data:
-            # OpenAI-style: {"data": [{"id": "model-name", "owned_by": "anthropic"}, ...]}
-            for m in data["data"]:
-                provider = m.get("owned_by", m.get("provider", "unknown"))
-                model_id = m.get("id", "")
-                if model_id:
-                    grouped.setdefault(provider, []).append(model_id)
-        elif isinstance(data, dict) and "models" in data:
-            for m in data["models"]:
-                provider = m.get("provider", "unknown")
-                model_id = m.get("name", m.get("id", ""))
-                if model_id:
-                    grouped.setdefault(provider, []).append(model_id)
-        elif isinstance(data, dict):
-            # Already provider-grouped: {"anthropic": [...], "openai": [...]}
-            for provider, models in data.items():
-                if isinstance(models, list):
-                    grouped[provider] = [
-                        (m if isinstance(m, str) else m.get("name", m.get("id", "")))
-                        for m in models
-                        if m
-                    ]
+            if isinstance(data, dict) and "data" in data:
+                # OpenAI: {"data": [{"id": "...", "owned_by": "...", "provider": "..."}, ...]}
+                for m in data["data"]:
+                    provider = (m.get("owned_by") or m.get("provider") or m.get("type")
+                                or m.get("provider_name") or "unknown")
+                    model_id = _extract_model_name(m)
+                    if model_id:
+                        grouped.setdefault(provider, []).append(model_id)
+            elif isinstance(data, dict) and "models" in data:
+                for m in data["models"]:
+                    provider = m.get("provider") or m.get("type") or "unknown"
+                    model_id = _extract_model_name(m)
+                    if model_id:
+                        grouped.setdefault(provider, []).append(model_id)
+            elif isinstance(data, dict):
+                # Already provider-grouped dict
+                for provider, models in data.items():
+                    if isinstance(models, list):
+                        names = [_extract_model_name(m) for m in models]
+                        names = [n for n in names if n]
+                        if names:
+                            grouped[provider] = names
+            elif isinstance(data, list):
+                # Flat list of model objects
+                for m in data:
+                    if isinstance(m, dict):
+                        provider = m.get("provider") or m.get("owned_by") or m.get("type") or "unknown"
+                        model_id = _extract_model_name(m)
+                        if model_id:
+                            grouped.setdefault(provider, []).append(model_id)
     except Exception as e:
-        logger.debug(f"Proxy /v1/models unavailable ({base}): {type(e).__name__}: {e}")
+        logger.debug(f"Proxy /v1/models error: {type(e).__name__}: {e}")
 
-    # 2. /v1/providers — proxy-defined custom providers (e.g. private endpoints)
+    # ─── 2. /v1/providers — custom proxy provider definitions ───
+    providers_seen = []
     try:
         resp = httpx.get(f"{base}/v1/providers", headers=headers, timeout=timeout)
         if resp.status_code == 200:
             data = resp.json()
-            # Format: [{"name": "custom-mistral", "models": ["foo", "bar"], "endpoint": "..."}, ...]
-            providers_list = data if isinstance(data, list) else data.get("providers", [])
-            for p in providers_list:
-                if not isinstance(p, dict):
-                    continue
-                pname = p.get("name", p.get("id", ""))
-                pmodels = p.get("models", [])
-                if pname and pmodels:
-                    # Normalize names to strings
-                    model_names = [m if isinstance(m, str) else m.get("name", m.get("id", "")) for m in pmodels]
-                    model_names = [m for m in model_names if m]
-                    if model_names:
-                        grouped.setdefault(pname, []).extend(model_names)
-    except Exception as e:
-        logger.debug(f"Proxy /v1/providers unavailable: {e}")
+            logger.debug(f"Proxy /v1/providers raw: {str(data)[:500]}")
 
-    # 3. /v1/aliases — model aliases (used as shortcut names)
+            # Try multiple container keys
+            providers_list = None
+            if isinstance(data, list):
+                providers_list = data
+            elif isinstance(data, dict):
+                for k in ("providers", "data", "items", "results"):
+                    if isinstance(data.get(k), list):
+                        providers_list = data[k]
+                        break
+                if providers_list is None and data:
+                    # Maybe dict keyed by provider name: {"Heimdal": {...}, "OpenAI": {...}}
+                    providers_list = [
+                        {"name": k, **v} if isinstance(v, dict) else {"name": k}
+                        for k, v in data.items()
+                    ]
+
+            if providers_list:
+                for p in providers_list:
+                    if not isinstance(p, dict):
+                        continue
+                    # Extract provider name (many possible keys)
+                    pname = (p.get("name") or p.get("id") or p.get("provider_name")
+                             or p.get("provider") or "")
+                    if not pname:
+                        continue
+                    providers_seen.append(pname)
+
+                    # Determine model list — try every known field
+                    pmodels = (p.get("models") or p.get("available_models")
+                               or p.get("model_list") or [])
+                    model_names = []
+                    if isinstance(pmodels, list):
+                        model_names = [_extract_model_name(m) for m in pmodels]
+                        model_names = [m for m in model_names if m]
+
+                    # Fallback: single default model
+                    if not model_names:
+                        default = (p.get("default_model") or p.get("model")
+                                   or p.get("default") or "")
+                        if default:
+                            model_names = [str(default)]
+
+                    # Try per-provider endpoint if still empty
+                    if not model_names:
+                        try:
+                            r2 = httpx.get(
+                                f"{base}/v1/providers/{pname}/models",
+                                headers=headers, timeout=timeout,
+                            )
+                            if r2.status_code == 200:
+                                pdata = r2.json()
+                                pm_list = pdata if isinstance(pdata, list) else pdata.get("models", pdata.get("data", []))
+                                if isinstance(pm_list, list):
+                                    model_names = [_extract_model_name(m) for m in pm_list]
+                                    model_names = [m for m in model_names if m]
+                        except Exception:
+                            pass
+
+                    if model_names:
+                        # Add as own provider group (preserving original name)
+                        grouped.setdefault(pname, []).extend(model_names)
+                        logger.info(f"Proxy provider '{pname}': {len(model_names)} model(s)")
+                    else:
+                        # No models found — register provider with placeholder
+                        grouped.setdefault(pname, [])
+                        logger.info(f"Proxy provider '{pname}' registered without models")
+    except Exception as e:
+        logger.debug(f"Proxy /v1/providers error: {type(e).__name__}: {e}")
+
+    # ─── 3. /v1/aliases — model aliases ───
     try:
         resp = httpx.get(f"{base}/v1/aliases", headers=headers, timeout=timeout)
         if resp.status_code == 200:
             data = resp.json()
-            aliases_list = data if isinstance(data, list) else data.get("aliases", [])
-            for a in aliases_list:
-                if not isinstance(a, dict):
-                    continue
-                alias_name = a.get("alias", "")
-                provider = a.get("provider", "aliases")
-                if alias_name:
-                    # Add to a dedicated "aliases" provider AND to the underlying provider
-                    grouped.setdefault("aliases", []).append(alias_name)
+            aliases_list = None
+            if isinstance(data, list):
+                aliases_list = data
+            elif isinstance(data, dict):
+                for k in ("aliases", "data", "items"):
+                    if isinstance(data.get(k), list):
+                        aliases_list = data[k]
+                        break
+
+            if aliases_list:
+                for a in aliases_list:
+                    if not isinstance(a, dict):
+                        continue
+                    alias_name = a.get("alias") or a.get("name") or a.get("id")
+                    if alias_name:
+                        grouped.setdefault("aliases", []).append(str(alias_name))
     except Exception as e:
-        logger.debug(f"Proxy /v1/aliases unavailable: {e}")
+        logger.debug(f"Proxy /v1/aliases error: {type(e).__name__}: {e}")
 
     if grouped:
         total = sum(len(v) for v in grouped.values())
-        logger.info(f"Proxy: discovered {total} model(s) across {len(grouped)} provider(s)")
+        logger.info(
+            f"Proxy: discovered {total} model(s) across {len(grouped)} provider(s): "
+            f"{list(grouped.keys())}"
+        )
     return grouped
 
 

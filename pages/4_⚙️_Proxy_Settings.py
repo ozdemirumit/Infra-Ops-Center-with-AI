@@ -214,12 +214,63 @@ with tab_proxy:
                         if provs_list:
                             with st.expander(f"🌐 Custom Provider Endpoints ({len(provs_list)})"):
                                 for p in provs_list:
-                                    st.text(f"• {p.get('name', '?')} → {p.get('endpoint', '?')}")
+                                    if isinstance(p, dict):
+                                        name = p.get("name") or p.get("id") or "?"
+                                        ptype = p.get("type") or p.get("provider") or "—"
+                                        url = p.get("base_url") or p.get("endpoint") or p.get("url") or "—"
+                                        default_model = p.get("default_model") or p.get("model") or "—"
+                                        st.text(f"• {name}  [{ptype}]  → {url}  (default: {default_model})")
+                                    else:
+                                        st.text(f"• {p}")
                 except Exception:
                     pass
 
             except Exception as e:
                 st.warning(f"⚠️ Cannot reach proxy: {e}")
+
+        # ─── Debug: Raw API responses ───
+        st.divider()
+        with st.expander("🔧 Debug — Raw API Responses (paste output here if a provider is missing)", expanded=False):
+            st.caption(
+                "If a provider configured in your proxy isn't showing up in the sidebar dropdown, "
+                "inspect the raw responses below and share them so the parser can be updated."
+            )
+
+            for endpoint in ["/v1/models", "/v1/providers", "/v1/aliases", "/health"]:
+                try:
+                    r = httpx.get(f"{base}{endpoint}", headers=headers, timeout=5.0)
+                    st.markdown(f"**GET {endpoint}** → HTTP {r.status_code}")
+                    try:
+                        data = r.json()
+                        st.json(data)
+                    except Exception:
+                        st.code(r.text[:1000], language="text")
+                except Exception as e:
+                    st.markdown(f"**GET {endpoint}** → ❌ {type(e).__name__}: {e}")
+
+            # Try to discover per-provider model endpoints
+            try:
+                r = httpx.get(f"{base}/v1/providers", headers=headers, timeout=5.0)
+                if r.status_code == 200:
+                    data = r.json()
+                    plist = data if isinstance(data, list) else data.get("providers", data.get("data", []))
+                    if isinstance(plist, list):
+                        for p in plist[:5]:  # max 5 to avoid spamming
+                            if isinstance(p, dict):
+                                pname = p.get("name") or p.get("id")
+                                if pname:
+                                    try:
+                                        r2 = httpx.get(f"{base}/v1/providers/{pname}/models",
+                                                       headers=headers, timeout=5.0)
+                                        st.markdown(f"**GET /v1/providers/{pname}/models** → HTTP {r2.status_code}")
+                                        try:
+                                            st.json(r2.json())
+                                        except Exception:
+                                            st.code(r2.text[:500])
+                                    except Exception:
+                                        pass
+            except Exception:
+                pass
 
 
 # ══════════════════════════════════════════════════════════════
