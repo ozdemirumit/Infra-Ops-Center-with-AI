@@ -348,6 +348,11 @@ with tab_generate:
         st.session_state["doc_text"] = ""
 
     if input_method == "📄 Upload File":
+        # Limits — AI prompt has a 30K char cap, so no point reading more
+        MAX_CHARS = 30000
+        MAX_PAGES_PDF = 200          # safety cap for huge PDFs
+        BIG_FILE_THRESHOLD = 10_000_000   # 10 MB warning
+
         uploaded_doc = st.file_uploader(
             "Upload Document",
             type=["pdf", "docx", "txt", "md", "html", "pptx"],
@@ -355,28 +360,66 @@ with tab_generate:
             key="doc_uploader",
         )
         if uploaded_doc is not None:
-            # Re-read only if filename changed (avoid re-processing on every rerun)
             cur_name = st.session_state.get("doc_uploaded_name")
+            file_size = len(uploaded_doc.getvalue()) if hasattr(uploaded_doc, "getvalue") else 0
+
             if cur_name != uploaded_doc.name:
-                import tempfile
+                # Show big file warning
+                if file_size > BIG_FILE_THRESHOLD:
+                    st.warning(
+                        f"⚠️ Large file ({file_size/1024/1024:.1f} MB) — "
+                        f"only the first {MAX_PAGES_PDF} pages or {MAX_CHARS:,} characters will be processed. "
+                        "Tip: For best results upload only the relevant API reference pages."
+                    )
+
+                import tempfile, os as _os, time as _time
                 from core.document_processor import extract_text
-                with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_doc.name.split('.')[-1]}") as tmp:
-                    tmp.write(uploaded_doc.getvalue())
-                    tmp_path = tmp.name
-                try:
-                    st.session_state["doc_text"] = extract_text(tmp_path)
-                    st.session_state["doc_uploaded_name"] = uploaded_doc.name
-                    st.success(f"✅ {uploaded_doc.name} read — {len(st.session_state['doc_text'])} characters")
-                except Exception as e:
-                    st.error(f"❌ Could not read document: {e}")
-                finally:
-                    import os as _os
+
+                # Status widget with progress
+                with st.status(f"📄 Processing **{uploaded_doc.name}** ({file_size/1024/1024:.1f} MB)…", expanded=True) as status:
+                    progress_placeholder = st.empty()
+                    progress_bar = None
+                    suffix = "." + uploaded_doc.name.rsplit(".", 1)[-1].lower()
+
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+                        tmp.write(uploaded_doc.getvalue())
+                        tmp_path = tmp.name
+
+                    def _on_progress(current, total):
+                        nonlocal progress_bar
+                        if progress_bar is None:
+                            progress_bar = progress_placeholder.progress(0, text=f"Reading pages…")
+                        pct = min(int(current / total * 100), 100) if total else 0
+                        progress_bar.progress(pct, text=f"Reading page {current} / {total}")
+
                     try:
-                        _os.unlink(tmp_path)
-                    except Exception:
-                        pass
+                        start = _time.time()
+                        text = extract_text(
+                            tmp_path,
+                            max_pages=MAX_PAGES_PDF,
+                            max_chars=MAX_CHARS,
+                            progress_cb=_on_progress,
+                        )
+                        elapsed = _time.time() - start
+                        st.session_state["doc_text"] = text
+                        st.session_state["doc_uploaded_name"] = uploaded_doc.name
+                        progress_placeholder.empty()
+                        status.update(
+                            label=f"✅ **{uploaded_doc.name}** — {len(text):,} chars extracted in {elapsed:.1f}s",
+                            state="complete",
+                            expanded=False,
+                        )
+                    except Exception as e:
+                        progress_placeholder.empty()
+                        status.update(label=f"❌ Failed to read document", state="error", expanded=True)
+                        st.error(f"❌ Could not read document: {type(e).__name__}: {e}")
+                    finally:
+                        try:
+                            _os.unlink(tmp_path)
+                        except Exception:
+                            pass
             else:
-                st.caption(f"✓ Loaded: {uploaded_doc.name} ({len(st.session_state['doc_text'])} chars)")
+                st.caption(f"✓ Loaded: {uploaded_doc.name} ({len(st.session_state['doc_text']):,} chars)")
 
     elif input_method == "📝 Paste Text":
         pasted = st.text_area(

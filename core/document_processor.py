@@ -14,12 +14,15 @@ logger = get_logger("document_processor")
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".txt", ".md", ".pptx", ".html"}
 
 
-def extract_text(file_path: str) -> str:
+def extract_text(file_path: str, max_pages: int = None, max_chars: int = None, progress_cb=None) -> str:
     """
     Extracts text content based on file extension.
 
     Args:
-        file_path: Path to the file to read
+        file_path: Path to the file
+        max_pages: For PDFs/PPTX, max pages/slides to read
+        max_chars: Stop early once extracted text exceeds this size
+        progress_cb: Optional callable(current, total) for progress UI
 
     Returns:
         Plain text extracted from the file
@@ -27,7 +30,7 @@ def extract_text(file_path: str) -> str:
     ext = Path(file_path).suffix.lower()
 
     if ext == ".pdf":
-        return _extract_pdf(file_path)
+        return _extract_pdf(file_path, max_pages=max_pages, progress_cb=progress_cb, max_chars=max_chars)
     elif ext == ".docx":
         return _extract_docx(file_path)
     elif ext == ".pptx":
@@ -160,16 +163,44 @@ def extract_from_url(url: str, save_dir: str) -> tuple[str, str]:
 
 # ─── File Readers ───
 
-def _extract_pdf(file_path: str) -> str:
-    """Extracts text from a PDF file."""
+def _extract_pdf(file_path: str, max_pages: int = None, progress_cb=None, max_chars: int = None) -> str:
+    """
+    Extracts text from a PDF file.
+
+    Args:
+        file_path: Path to the PDF
+        max_pages: Optional maximum number of pages to process
+        progress_cb: Optional callable(current, total) called per page
+        max_chars: Stop extraction once total text exceeds this size
+    """
     from PyPDF2 import PdfReader
 
     reader = PdfReader(file_path)
+    total_pages = len(reader.pages)
+    limit = min(total_pages, max_pages) if max_pages else total_pages
+
     pages = []
-    for i, page in enumerate(reader.pages):
-        text = page.extract_text()
+    total_chars = 0
+    for i in range(limit):
+        try:
+            text = reader.pages[i].extract_text()
+        except Exception:
+            text = ""
         if text:
             pages.append(f"[Page {i + 1}]\n{text}")
+            total_chars += len(text)
+
+        if progress_cb:
+            try:
+                progress_cb(i + 1, limit)
+            except Exception:
+                pass
+
+        # Early exit when reaching size cap (no point extracting more — AI truncates anyway)
+        if max_chars and total_chars >= max_chars:
+            pages.append(f"\n[Truncated at page {i + 1} / {total_pages} — reached size limit]")
+            break
+
     return "\n\n".join(pages)
 
 
