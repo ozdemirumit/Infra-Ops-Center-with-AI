@@ -1,0 +1,65 @@
+name: service_health_check
+description: >
+  Generic service health probe. Works with any MCP tool that exposes a
+  status-check action. The tool name is parameterised so the same workflow
+  serves Linux services, Windows services, switches, or custom MCPs.
+
+inputs:
+  mcp_tool: linux_ops
+  mcp_action: "systemctl is-active nginx"
+  target_host: ""
+  service_label: "nginx"
+
+steps:
+  - id: probe
+    type: tool
+    tool: "{{ inputs.mcp_tool }}"
+    input:
+      command: "{{ inputs.mcp_action }}"
+      target_host: "{{ inputs.target_host }}"
+
+  - id: decide
+    type: branch
+    when: "probe.output contains active"
+    then:
+      - id: ok_log
+        type: notify
+        channel: log
+        message: "{{ inputs.service_label }} healthy on {{ inputs.target_host }}"
+    else:
+      - id: alert_agent
+        type: agent
+        prompt: >
+          The service "{{ inputs.service_label }}" on {{ inputs.target_host }} is
+          not active. Tool output was:
+          ---
+          {{ probe.output }}
+          ---
+          Investigate using read-only commands (status, recent logs) and
+          propose a remediation plan. Do NOT make changes.
+        max_steps: 4
+        allow_changes: false
+      - id: restart_approval
+        type: wait_approval
+        risk: high
+        prompt: >
+          Restart "{{ inputs.service_label }}" on {{ inputs.target_host }}?
+          Review the analysis above before approving.
+      - id: do_restart
+        type: tool
+        tool: "{{ inputs.mcp_tool }}"
+        input:
+          command: "systemctl restart {{ inputs.service_label }}"
+          target_host: "{{ inputs.target_host }}"
+        on_error: continue
+      - id: verify
+        type: tool
+        tool: "{{ inputs.mcp_tool }}"
+        input:
+          command: "{{ inputs.mcp_action }}"
+          target_host: "{{ inputs.target_host }}"
+      - id: final_notify
+        type: notify
+        channel: log
+        level: "{{ verify.ok }}"
+        message: "{{ inputs.service_label }} restart result: {{ verify.output }}"

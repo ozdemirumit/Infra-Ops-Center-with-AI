@@ -1,0 +1,67 @@
+name: disk_full_remediation
+description: >
+  When a disk metric crosses critical, investigate top consumers, propose a
+  cleanup, ask for human approval, then re-check.
+
+trigger:
+  type: incident
+  metric: disk
+  severity: critical
+
+inputs:
+  cleanup_command: "journalctl --vacuum-time=7d && find /var/log -name '*.gz' -mtime +30 -delete"
+
+steps:
+  - id: investigate
+    type: agent
+    prompt: >
+      A disk threshold was breached on {{ inputs.server_name }} (IP {{ inputs.server_ip }}).
+      Identify the largest directories under /, /var, /home and list the top 5
+      space consumers. Do NOT make changes — read-only analysis only.
+    max_steps: 6
+    allow_changes: false
+
+  - id: propose_cleanup
+    type: wait_approval
+    risk: medium
+    prompt: >
+      Cleanup plan: {{ inputs.cleanup_command }}
+      Approve to execute on {{ inputs.server_name }}, or reject to skip.
+
+  - id: run_cleanup
+    type: tool
+    tool: linux_ops
+    input:
+      command: "{{ inputs.cleanup_command }}"
+      target_host: "{{ inputs.server_ip }}"
+
+  - id: recheck
+    type: metric_check
+    metric: disk
+    expect:
+      compare: lt
+      value: 80
+
+  - id: maybe_escalate
+    type: branch
+    when: "recheck.failed"
+    then:
+      - id: notify_team
+        type: notify
+        channel: log
+        level: warning
+        message: "Disk still high on {{ inputs.server_name }} after cleanup."
+      - id: deeper_analysis
+        type: agent
+        prompt: >
+          Cleanup ran on {{ inputs.server_name }} but disk is still above threshold.
+          Suggest a volume-expansion plan and identify any process actively
+          writing to /var.
+        max_steps: 4
+    else:
+      - id: notify_ok
+        type: notify
+        channel: log
+        message: "Disk back below 80% on {{ inputs.server_name }}."
+      - id: close
+        type: close_incident

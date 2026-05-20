@@ -20,6 +20,7 @@ chardet>=5.0.0
 beautifulsoup4>=4.12.0
 
 APScheduler>=3.10.0
+PyYAML>=6.0
 
 # LDAP / Active Directory authentication
 ldap3>=2.9.1

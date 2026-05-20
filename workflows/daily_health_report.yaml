@@ -1,0 +1,47 @@
+name: daily_health_report
+description: >
+  Sweep every active metric, run a fresh check, and let the agent produce a
+  natural-language summary. Designed to be scheduled (daily).
+
+trigger:
+  type: schedule
+  cron: "0 8 * * *"   # 08:00 every day — wire from Scheduled Tasks page
+
+steps:
+  - id: check_disk
+    type: metric_check
+    metric: disk
+    expect: { compare: lt, value: 85 }
+    on_error: continue
+
+  - id: check_memory
+    type: metric_check
+    metric: memory
+    expect: { compare: lt, value: 90 }
+    on_error: continue
+
+  - id: check_cpu
+    type: metric_check
+    metric: cpu_load
+    expect: { compare: lt, value: 4.0 }
+    on_error: continue
+
+  - id: summarize
+    type: agent
+    prompt: >
+      Three monitor checks just ran. Produce a concise daily health report
+      (max 10 lines) covering disk, memory, and CPU. Highlight any host where
+      the expectation was not met. Use no tool calls — only the data already
+      gathered:
+      - Disk: {{ check_disk.results }}
+      - Memory: {{ check_memory.results }}
+      - CPU: {{ check_cpu.results }}
+    max_steps: 1
+    allow_changes: false
+
+  - id: publish
+    type: notify
+    channel: log
+    message: |
+      Daily health report:
+      {{ summarize.summary }}

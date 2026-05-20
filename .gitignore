@@ -6,6 +6,8 @@ devices/devices.json
 sessions/sessions.json
 tools/tools_state.json
 monitor_state.json
+monitor_history.json
+workflow_runs.json
 pending_tickets.json
 archived_tickets.json
 error_output.json

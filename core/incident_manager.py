@@ -73,14 +73,68 @@ def handle_alert(alert, current_state) -> Optional[str]:
         logger.error(f"Failed to create incident session: {e}")
         return None
 
-    # Run automatic remediation prompt (headless mode)
-    try:
-        prompt = _build_remediation_prompt(alert)
-        _run_headless(prompt, connections, session_id)
-    except Exception as e:
-        logger.error(f"Headless agent error: {e}")
+    # Prefer a workflow if one is registered for this metric+severity;
+    # otherwise fall back to the free-form headless agent prompt.
+    handled_by_workflow = _maybe_run_workflow(alert, connections, session_id)
+    if not handled_by_workflow:
+        try:
+            prompt = _build_remediation_prompt(alert)
+            _run_headless(prompt, connections, session_id)
+        except Exception as e:
+            logger.error(f"Headless agent error: {e}")
 
     return session_id
+
+
+def _maybe_run_workflow(alert, connections: dict, session_id: str) -> bool:
+    """
+    Look for an incident-triggered workflow whose trigger matches this alert.
+    Returns True if a workflow was launched.
+    """
+    try:
+        from core.workflow import list_workflows, load_workflow, WorkflowEngine
+        for meta in list_workflows():
+            if meta.get("errors"):
+                continue
+            trig = meta.get("trigger", {}) or {}
+            if trig.get("type") != "incident":
+                continue
+            # Match metric (optional) and severity (optional)
+            if trig.get("metric") and trig["metric"] != alert.check_name:
+                continue
+            if trig.get("severity") and trig["severity"] != alert.severity:
+                continue
+
+            wf = load_workflow(meta["name"])
+            inputs = {
+                "server_name": alert.server_name,
+                "server_ip": alert.server_ip,
+                "server_id": alert.server_id,
+                "metric": alert.check_name,
+                "value": alert.value,
+                "threshold": alert.threshold,
+                "unit": alert.unit,
+                "severity": alert.severity,
+            }
+            engine = WorkflowEngine()
+            # Run in background so handle_alert returns fast
+            import threading
+            threading.Thread(
+                target=engine.start,
+                kwargs=dict(
+                    workflow=wf, inputs=inputs, connections=connections,
+                    session_id=session_id, triggered_by=f"incident:{alert.check_name}",
+                ),
+                daemon=True, name=f"wf-{meta['name'][:20]}",
+            ).start()
+            logger.info(
+                f"Workflow '{meta['name']}' launched for "
+                f"{alert.check_name}/{alert.severity}"
+            )
+            return True
+    except Exception as e:
+        logger.warning(f"Workflow lookup failed: {e}")
+    return False
 
 
 # ─── Helper Functions ───────────────────────────────────────────────
