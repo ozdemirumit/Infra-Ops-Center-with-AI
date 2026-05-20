@@ -10,6 +10,8 @@ import requests
 import urllib3
 import json
 import base64
+import threading
+import time
 from logging_config.logger import get_logger, audit_log, AuditEvent
 from config.settings import settings
 
@@ -17,6 +19,70 @@ from config.settings import settings
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 logger = get_logger("tools")
+
+
+# ─── Token cache ────────────────────────────────────────────────────
+# Commvault QSDK tokens are valid for ~30 min. Re-logging in on every
+# tool call is expensive (TLS handshake + bcrypt-style password check).
+# Cache per (host, user) for 25 min — comfortably under the server limit.
+
+_TOKEN_TTL_SECONDS = 25 * 60
+_TOKEN_CACHE: dict[tuple[str, str], tuple[str, float]] = {}
+_TOKEN_LOCK = threading.Lock()
+
+
+def _cache_get(host: str, user: str) -> str | None:
+    with _TOKEN_LOCK:
+        key = (host, user)
+        entry = _TOKEN_CACHE.get(key)
+        if not entry:
+            return None
+        token, expires_at = entry
+        if time.time() >= expires_at:
+            _TOKEN_CACHE.pop(key, None)
+            return None
+        return token
+
+
+def _cache_put(host: str, user: str, token: str) -> None:
+    with _TOKEN_LOCK:
+        _TOKEN_CACHE[(host, user)] = (token, time.time() + _TOKEN_TTL_SECONDS)
+
+
+def _cache_invalidate(host: str, user: str) -> None:
+    with _TOKEN_LOCK:
+        _TOKEN_CACHE.pop((host, user), None)
+
+
+# ─── HTTP retry config ──────────────────────────────────────────────
+
+_RETRY_STATUS = {502, 503, 504, 408}  # transient — worth retrying
+_RETRY_MAX = 2                          # 3 total attempts
+_RETRY_BACKOFF_SECONDS = 1.5            # 1.5, 3.0
+
+
+# ─── Friendly HTTP error mapping ────────────────────────────────────
+
+_HTTP_HINT = {
+    400: "Bad request — check parameters / payload shape.",
+    401: "Session expired or credentials invalid — token will refresh.",
+    403: "Permission denied — the bound user lacks rights for this endpoint.",
+    404: "Resource not found — verify the ID / path.",
+    405: "Method not allowed on this endpoint.",
+    409: "Conflict — another operation may be in progress.",
+    413: "Payload too large.",
+    429: "Rate limited — back off and retry.",
+    500: "Commvault internal server error — check CommServ logs.",
+    502: "Gateway / proxy error in front of Commvault.",
+    503: "Commvault service unavailable.",
+    504: "Commvault timeout — request may have started but not finished.",
+}
+
+
+def _friendly_http_error(status: int, body: str) -> str:
+    hint = _HTTP_HINT.get(status, "")
+    snippet = (body or "").strip().replace("\n", " ")[:300]
+    return f"HTTP {status}: {hint}" + (f"  Server: {snippet}" if snippet else "")
 
 # ─── MCP Tool Definition ───
 
@@ -42,8 +108,32 @@ COMMVAULT_OPS_TOOL = {
             "action": {
                 "type": "string",
                 "description": (
-                    "Curated NL action (e.g. 'list jobs', 'start backup ID:5 full'), "
-                    "or one of: 'search_api', 'raw', 'list_actions'."
+                    "Either a curated action key (fast path, structured), "
+                    "a natural-language phrase ('list active jobs'), or a "
+                    "meta-action: 'search_api' / 'raw' / 'list_actions'."
+                ),
+            },
+            "entity_id": {
+                "type": "integer",
+                "description": (
+                    "Entity ID for actions that need one (e.g. job_detail, "
+                    "client_detail). Alternative to embedding 'ID:<n>' in "
+                    "the NL action string."
+                ),
+            },
+            "page_size": {
+                "type": "integer",
+                "description": (
+                    "Pagination — items per page for list actions "
+                    "(jobs/clients/alerts/users/events). Default off; pass "
+                    "page_size=100 to enable auto-paging."
+                ),
+            },
+            "max_pages": {
+                "type": "integer",
+                "description": (
+                    "Pagination — cap on pages fetched (default 5). Combine "
+                    "with page_size for large result sets."
                 ),
             },
             # search_api
@@ -109,7 +199,15 @@ class CommvaultSession:
         self._logged_in = False
 
     def login(self) -> bool:
-        """SP36 Login: Base64 encoded password, domain support."""
+        """SP36 Login. Reuses a cached QSDK token when available."""
+        # ── Cache hit — skip the network round trip entirely ──
+        cached = _cache_get(self.host, self.user)
+        if cached:
+            self._auth_token = cached
+            self.session.headers["Authtoken"] = cached
+            self._logged_in = True
+            return True
+
         try:
             encoded_pwd = base64.b64encode(self.pwd.encode("utf-8")).decode("utf-8")
             domain = ""
@@ -121,7 +219,9 @@ class CommvaultSession:
             if domain:
                 login_payload["domain"] = domain
 
-            resp = self.session.post(f"{self.base_url}/Login", json=login_payload, timeout=settings.COMMVAULT_TIMEOUT)
+            resp = self.session.post(f"{self.base_url}/Login",
+                                     json=login_payload,
+                                     timeout=settings.COMMVAULT_TIMEOUT)
 
             if resp.status_code == 200:
                 data = resp.json()
@@ -132,7 +232,8 @@ class CommvaultSession:
                     self._auth_token = token
                     self.session.headers["Authtoken"] = token
                     self._logged_in = True
-                    logger.info(f"Commvault SP36 login successful: {self.base_url}")
+                    _cache_put(self.host, self.user, token)
+                    logger.info(f"Commvault SP36 login successful: {self.base_url} (token cached)")
                     return True
 
             logger.warning(f"Commvault login failed: HTTP {resp.status_code}")
@@ -141,40 +242,102 @@ class CommvaultSession:
             logger.error(f"Commvault login error: {str(e)}")
             return False
 
-    def _request(self, method: str, endpoint: str, payload: dict = None, params: dict = None, use_v4: bool = False) -> dict:
-        """General HTTP request method."""
+    def _request(self, method: str, endpoint: str, payload: dict = None,
+                 params: dict = None, use_v4: bool = False) -> dict:
+        """
+        General HTTP request method with retry + 401 cache invalidation.
+
+        - Retries 502/503/504/408 and ConnectionError up to _RETRY_MAX times
+          with exponential-ish backoff.
+        - On 401, drops the cached token and re-logs in once.
+        - Maps every error to a friendly message via _friendly_http_error.
+        """
         if not self._logged_in:
             if not self.login():
                 return {"error": "Could not log in to Commvault"}
 
         base = self.base_url_v4 if use_v4 else self.base_url
         url = f"{base}/{endpoint.lstrip('/')}"
+        _retried_auth = False
+        attempt = 0
+        last_err = None
 
-        try:
-            if method == "GET":
-                resp = self.session.get(url, params=params, timeout=settings.COMMVAULT_TIMEOUT)
-            elif method == "POST":
-                resp = self.session.post(url, json=payload or {}, timeout=settings.COMMVAULT_TIMEOUT)
-            elif method == "PUT":
-                resp = self.session.put(url, json=payload or {}, timeout=settings.COMMVAULT_TIMEOUT)
-            elif method == "DELETE":
-                resp = self.session.delete(url, timeout=settings.COMMVAULT_TIMEOUT)
-            else:
-                return {"error": f"Unsupported HTTP method: {method}"}
+        while attempt <= _RETRY_MAX:
+            attempt += 1
+            try:
+                if method == "GET":
+                    resp = self.session.get(url, params=params,
+                                            timeout=settings.COMMVAULT_TIMEOUT)
+                elif method == "POST":
+                    resp = self.session.post(url, json=payload or {},
+                                             timeout=settings.COMMVAULT_TIMEOUT)
+                elif method == "PUT":
+                    resp = self.session.put(url, json=payload or {},
+                                            timeout=settings.COMMVAULT_TIMEOUT)
+                elif method == "DELETE":
+                    resp = self.session.delete(url,
+                                               timeout=settings.COMMVAULT_TIMEOUT)
+                else:
+                    return {"error": f"Unsupported HTTP method: {method}"}
 
-            resp.raise_for_status()
-            if resp.text.strip():
-                return resp.json()
-            return {"status": "success", "message": "Operation completed successfully"}
+                # 401 → token expired remotely. Invalidate cache, re-login once.
+                if resp.status_code == 401 and not _retried_auth:
+                    logger.info("Commvault 401 — refreshing token and retrying.")
+                    _cache_invalidate(self.host, self.user)
+                    self._logged_in = False
+                    self.session.headers.pop("Authtoken", None)
+                    if self.login():
+                        _retried_auth = True
+                        continue
+                    return {"error": _friendly_http_error(401, resp.text)}
 
-        except requests.exceptions.HTTPError as e:
-            return {"error": f"HTTP {e.response.status_code}: {e.response.text[:500]}"}
-        except requests.exceptions.ConnectionError:
-            return {"error": f"Connection error: {url}"}
-        except requests.exceptions.Timeout:
-            return {"error": f"Timeout ({settings.COMMVAULT_TIMEOUT}s)"}
-        except Exception as e:
-            return {"error": str(e)}
+                # Transient → retry with backoff
+                if resp.status_code in _RETRY_STATUS and attempt <= _RETRY_MAX:
+                    backoff = _RETRY_BACKOFF_SECONDS * attempt
+                    logger.warning(
+                        f"Commvault {method} {endpoint} → HTTP "
+                        f"{resp.status_code}; retry {attempt}/{_RETRY_MAX} "
+                        f"in {backoff:.1f}s"
+                    )
+                    time.sleep(backoff)
+                    continue
+
+                resp.raise_for_status()
+                if resp.text.strip():
+                    return resp.json()
+                return {"status": "success",
+                        "message": "Operation completed successfully"}
+
+            except requests.exceptions.HTTPError as e:
+                return {"error": _friendly_http_error(
+                    e.response.status_code, e.response.text
+                )}
+            except requests.exceptions.ConnectionError as e:
+                last_err = f"Connection error: {url}"
+                if attempt <= _RETRY_MAX:
+                    backoff = _RETRY_BACKOFF_SECONDS * attempt
+                    logger.warning(
+                        f"Commvault {method} {endpoint} → connection error; "
+                        f"retry {attempt}/{_RETRY_MAX} in {backoff:.1f}s ({e})"
+                    )
+                    time.sleep(backoff)
+                    continue
+                return {"error": last_err}
+            except requests.exceptions.Timeout:
+                last_err = f"Timeout ({settings.COMMVAULT_TIMEOUT}s)"
+                if attempt <= _RETRY_MAX:
+                    backoff = _RETRY_BACKOFF_SECONDS * attempt
+                    logger.warning(
+                        f"Commvault {method} {endpoint} → timeout; "
+                        f"retry {attempt}/{_RETRY_MAX} in {backoff:.1f}s"
+                    )
+                    time.sleep(backoff)
+                    continue
+                return {"error": last_err}
+            except Exception as e:
+                return {"error": str(e)}
+
+        return {"error": last_err or "request failed after retries"}
 
     def get(self, endpoint, params=None, use_v4=False):
         return self._request("GET", endpoint, params=params, use_v4=use_v4)
@@ -188,13 +351,18 @@ class CommvaultSession:
     def delete(self, endpoint, use_v4=False):
         return self._request("DELETE", endpoint, use_v4=use_v4)
 
-    def close(self):
-        """SP36: POST /Logout."""
-        if self._logged_in and self._auth_token:
+    def close(self, logout: bool = False):
+        """
+        Close the HTTP session. By default we DO NOT call /Logout — the
+        token stays cached and reusable until its TTL. Pass logout=True
+        when you want to explicitly revoke (e.g. on shutdown).
+        """
+        if logout and self._logged_in and self._auth_token:
             try:
                 self.session.post(f"{self.base_url}/Logout", timeout=5)
             except Exception:
                 pass
+            _cache_invalidate(self.host, self.user)
         self.session.close()
 
 
@@ -610,6 +778,82 @@ def _do_alert_delete(cv, host, entity_id):
 # MAIN PROCESSING FUNCTION
 # ═══════════════════════════════════════════════
 
+# ─── Pagination helper ─────────────────────────────────────────────
+
+# Endpoints that support standard SP36 pagination via Limit / Start
+_PAGINATED_PREFIXES = (
+    "Job", "Client", "Subclient", "AlertRule", "Events", "User",
+)
+
+
+def _is_paginated_endpoint(endpoint: str) -> bool:
+    e = endpoint.lstrip("/").split("/", 1)[0]
+    return e in _PAGINATED_PREFIXES
+
+
+def _paginate_get(cv: "CommvaultSession", endpoint: str, params: dict | None,
+                  use_v4: bool, page_size: int, max_pages: int) -> dict:
+    """
+    Loop GET <endpoint>?Limit=N&Start=O until either:
+      - response payload contains <page_size pages
+      - max_pages reached
+      - response has no items / error
+    Returns aggregated dict { items, pages, total, truncated }.
+    """
+    items: list = []
+    params = dict(params or {})
+    page = 0
+    truncated = False
+
+    while page < max_pages:
+        page += 1
+        params["Limit"] = page_size
+        params["Start"] = (page - 1) * page_size
+
+        result = cv.get(endpoint, params=params, use_v4=use_v4)
+        if not isinstance(result, dict) or "error" in result:
+            return result if isinstance(result, dict) else {"error": str(result)}
+
+        # Heuristic: locate the array payload in the response
+        page_items = _extract_items(result)
+        if not page_items:
+            break
+        items.extend(page_items)
+
+        if len(page_items) < page_size:
+            break  # last page
+
+    if page == max_pages:
+        truncated = True
+
+    return {
+        "items": items,
+        "pages_fetched": page,
+        "total": len(items),
+        "truncated": truncated,
+        "page_size": page_size,
+    }
+
+
+def _extract_items(response: dict) -> list:
+    """Find the most likely 'items' list in a Commvault response."""
+    if not isinstance(response, dict):
+        return []
+    # Common shapes: {"clientProperties":[...]} / {"jobs":[...]} /
+    # {"users":[...]} / {"AlertRule":[...]} / {"data":[...]}
+    for key in ("jobs", "clientProperties", "users", "userList",
+                "AlertRule", "alertRules", "subClientProperties",
+                "data", "items", "events"):
+        v = response.get(key)
+        if isinstance(v, list):
+            return v
+    # Fallback: return first list-valued field
+    for v in response.values():
+        if isinstance(v, list):
+            return v
+    return []
+
+
 def _action_list_actions() -> str:
     """Return the catalog of curated actions (no auth needed)."""
     lines = ["Curated Commvault actions (call with natural language):"]
@@ -711,6 +955,53 @@ def execute_commvault_api(host: str, user: str, pwd: str, action) -> str:
         # ── Raw passthrough ──
         if action_lower == "raw":
             return _action_raw(cv, host, tool_input)
+
+        # ── Direct-action fast path ──
+        # If the LLM passes a key from COMMVAULT_ACTIONS verbatim, skip the
+        # keyword matcher and go straight to the endpoint. Faster, no
+        # keyword ambiguity, easier to write programmatically (e.g. from
+        # a workflow YAML).
+        if action_str in COMMVAULT_ACTIONS:
+            cfg = COMMVAULT_ACTIONS[action_str]
+            endpoint = cfg["endpoint"]
+            params = dict(cfg.get("params", {}))
+            use_v4 = cfg.get("v4", False)
+            method = cfg["method"]
+
+            # Allow callers to pass entity_id structurally OR via the
+            # ID extractor on a NL hint.
+            structured_id = tool_input.get("entity_id") or tool_input.get("id")
+            if structured_id and "{id}" in endpoint:
+                endpoint = endpoint.replace("{id}", str(structured_id))
+            elif "{id}" in endpoint:
+                eid = _extract_id_from_action(action_str)
+                if eid:
+                    endpoint = endpoint.replace("{id}", eid)
+                else:
+                    return (
+                        f"⚠️ Action '{action_str}' needs an ID. Pass "
+                        f"entity_id=<n> or include 'ID:<n>' in the action."
+                    )
+
+            # Optional pagination override from tool_input
+            page_size = int(tool_input.get("page_size", 0))
+            max_pages = int(tool_input.get("max_pages", 0))
+
+            if method == "GET" and _is_paginated_endpoint(endpoint) and \
+                    (page_size or max_pages):
+                page_size = page_size or 100
+                max_pages = max_pages or 5
+                paged = _paginate_get(cv, endpoint, params,
+                                      use_v4, page_size, max_pages)
+                return _format_result(paged, host,
+                                      f"{cfg.get('desc', action_str)} "
+                                      f"(paged: {paged.get('total', 0)} items)")
+
+            if method == "GET":
+                result = cv.get(endpoint, params=params or None, use_v4=use_v4)
+            else:
+                result = cv.post(endpoint, use_v4=use_v4)
+            return _format_result(result, host, cfg.get("desc", action_str))
 
         entity_id = _extract_id_from_action(action_str)
         action = action_str  # rest of the function expects string
