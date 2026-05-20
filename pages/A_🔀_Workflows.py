@@ -20,6 +20,7 @@ from core.workflow import (
     list_runs, get_run, delete_run,
     WORKFLOWS_DIR, STATUS_WAITING_APPROVAL, STATUS_RUNNING,
     STATUS_COMPLETED, STATUS_FAILED, STATUS_CANCELLED,
+    reload_workflow_jobs, get_scheduled_jobs_info,
 )
 from core.workflow.loader import save_workflow, delete_workflow, validate_workflow
 
@@ -62,6 +63,33 @@ tab_lib, tab_runs, tab_edit = st.tabs([
 # ═══════════════════════════════════════════════════════════════
 
 with tab_lib:
+    # ── Scheduled-workflow summary ─────────────────────────────
+    schedule_rows = get_scheduled_jobs_info()
+    schedule_map = {r["workflow"]: r for r in schedule_rows}
+
+    with st.container(border=True):
+        col_sched_info, col_sched_action = st.columns([4, 1])
+        with col_sched_info:
+            if schedule_rows:
+                st.markdown(f"⏰ **{len(schedule_rows)} scheduled workflow(s)**")
+                for row in schedule_rows:
+                    nxt = row.get("next_run") or "?"
+                    st.caption(
+                        f"• `{row['workflow']}` — cron `{row['cron']}` · "
+                        f"next: {nxt[:19] if nxt != '?' else '?'}"
+                    )
+            else:
+                st.caption(
+                    "⏰ No scheduled workflows yet. Add `trigger: { type: schedule, "
+                    "cron: \"<expr>\" }` to a YAML to register one."
+                )
+        with col_sched_action:
+            if st.button("🔄 Reload schedules", use_container_width=True,
+                         help="Re-scan workflow YAMLs and refresh cron jobs"):
+                n = reload_workflow_jobs()
+                st.success(f"✅ {n} scheduled workflow(s) registered")
+                st.rerun()
+
     workflows = list_workflows()
     if not workflows:
         st.info(f"No workflows yet. Drop YAML files into `{WORKFLOWS_DIR}` "
@@ -83,6 +111,12 @@ with tab_lib:
                     if trig:
                         st.caption(f"Trigger: `{trig.get('type', '?')}` "
                                    f"{json.dumps({k: v for k, v in trig.items() if k != 'type'})}")
+                    sched = schedule_map.get(wf_meta["name"])
+                    if sched:
+                        nxt = (sched.get("next_run") or "?")[:19]
+                        st.caption(
+                            f"⏰ Scheduled — next run: {nxt}"
+                        )
                     st.caption(f"Steps: **{wf_meta['step_count']}**")
                     if errs:
                         for e in errs:
@@ -98,6 +132,10 @@ with tab_lib:
                                               use_container_width=True):
                         if st.session_state.get("_wf_confirm_del") == wf_meta["file"]:
                             delete_workflow(wf_meta["name"])
+                            try:
+                                reload_workflow_jobs()
+                            except Exception:
+                                pass
                             st.session_state.pop("_wf_confirm_del", None)
                             st.rerun()
                         else:
@@ -397,7 +435,12 @@ with tab_edit:
                      disabled=(not target_name)):
             try:
                 p = save_workflow(target_name, yaml_text)
-                st.success(f"Saved: {p.name}")
+                # Refresh scheduled jobs in case this workflow has trigger:schedule
+                try:
+                    n = reload_workflow_jobs()
+                    st.success(f"Saved: {p.name}  ·  {n} scheduled workflow(s) active")
+                except Exception:
+                    st.success(f"Saved: {p.name}")
                 st.rerun()
             except Exception as e:
                 st.error(str(e))
@@ -406,6 +449,10 @@ with tab_edit:
         if choice != "<new>" and st.button("🗑️ Delete", use_container_width=True):
             if st.session_state.get("_ed_confirm_del") == choice:
                 delete_workflow(target_name)
+                try:
+                    reload_workflow_jobs()
+                except Exception:
+                    pass
                 st.session_state.pop("_ed_confirm_del", None)
                 st.success(f"Deleted: {choice}")
                 st.rerun()

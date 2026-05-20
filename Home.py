@@ -45,6 +45,20 @@ except Exception as _e:
         f"Monitor scheduler init failed — continuing without background monitoring: {_e}"
     )
 
+# ── Workflow scheduler (cron-driven workflows) ──
+try:
+    @_st.cache_resource
+    def _start_workflow_scheduler():
+        from core.workflow import start_workflow_scheduler
+        return start_workflow_scheduler()
+
+    _start_workflow_scheduler()
+except Exception as _e:
+    import logging
+    logging.getLogger("workflow.scheduler").warning(
+        f"Workflow scheduler init failed — continuing without scheduled workflows: {_e}"
+    )
+
 # ── Log cleanup scheduler (daily) ──
 try:
     @_st.cache_resource
