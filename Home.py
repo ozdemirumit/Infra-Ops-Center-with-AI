@@ -266,7 +266,17 @@ if active_session and active_session.get("status") in (STATUS_ACTIVE, STATUS_COM
     else:
             # Normal user input — for sessions in any state
             planning_enabled = st.session_state.get("planning_enabled", True)
-            if prompt := st.chat_input("Type your message..."):
+
+            # If an action plan was queued from the Action Plan page,
+            # consume it as the next user message.
+            seed = st.session_state.pop("_action_plan_chat_seed", None)
+
+            if seed:
+                prompt = seed
+            else:
+                prompt = st.chat_input("Type your message...")
+
+            if prompt:
                 if planning_enabled and is_risky_prompt(prompt):
                     with st.spinner("🗣️ AI generating plan..."):
                         plan = generate_plan(prompt, connections)
