@@ -237,7 +237,8 @@ with tab_runs:
                             delete_run(r["id"])
                             st.rerun()
 
-                # Approval inbox
+                # Approval inbox — handles wait_approval, manual_instruction,
+                # and capability-gap pauses uniformly.
                 if status == STATUS_WAITING_APPROVAL:
                     idx = r["current_index"]
                     steps = r["workflow_steps"]
@@ -245,24 +246,50 @@ with tab_runs:
                         step = steps[idx]
                         from core.workflow.template import render as _r
                         rendered = _r(step, r["context"])
-                        risk = rendered.get("risk", "medium")
+                        # Pull most recent history entry to detect capability-gap
+                        last_result = (r.get("history") or [{}])[-1].get("result", {})
+                        kind = last_result.get("kind", "")
+                        risk = rendered.get("risk", last_result.get("risk", "medium"))
                         risk_color = {"low": "🟢", "medium": "🟡", "high": "🔴"}.get(risk, "🟡")
-                        st.warning(f"⏸️ **Awaiting approval** — risk: {risk_color} {risk}")
-                        st.info(rendered.get("prompt", ""))
 
-                        note = st.text_input("Approval note (optional)",
+                        if kind == "capability_gap":
+                            st.error(
+                                f"🔌 **Missing MCP capability** — risk: "
+                                f"{risk_color} {risk}"
+                            )
+                            st.markdown(last_result.get("instructions", ""))
+                            ok_label = "✅ I did it manually — continue"
+                            no_label = "❌ Abort workflow"
+                        elif kind == "manual_instruction":
+                            st.info(
+                                f"📝 **Manual step** — risk: {risk_color} {risk}"
+                            )
+                            st.markdown(f"### {last_result.get('title', 'Action required')}")
+                            st.markdown(last_result.get("body", ""))
+                            if last_result.get("why"):
+                                st.caption(f"_Why this is manual:_ {last_result['why']}")
+                            ok_label = "✅ Confirm done — continue"
+                            no_label = "❌ Skip (abort workflow)"
+                        else:
+                            st.warning(
+                                f"⏸️ **Awaiting approval** — risk: {risk_color} {risk}"
+                            )
+                            st.info(rendered.get("prompt", ""))
+                            ok_label = "✅ Approve & resume"
+                            no_label = "❌ Reject (cancel run)"
+
+                        note = st.text_input("Note (optional)",
                                              key=f"note_{r['id']}")
                         col_ok, col_no = st.columns(2)
                         with col_ok:
-                            if st.button("✅ Approve & resume",
-                                         key=f"ok_{r['id']}", type="primary",
+                            if st.button(ok_label, key=f"ok_{r['id']}",
+                                         type="primary",
                                          use_container_width=True):
                                 WorkflowEngine().resume(r["id"], approval=True,
                                                         approval_note=note)
                                 st.rerun()
                         with col_no:
-                            if st.button("❌ Reject (cancel run)",
-                                         key=f"no_{r['id']}",
+                            if st.button(no_label, key=f"no_{r['id']}",
                                          use_container_width=True):
                                 WorkflowEngine().resume(r["id"], approval=False,
                                                         approval_note=note)
@@ -413,6 +440,14 @@ with tab_edit:
         "- `sleep` — pause N seconds (≤300).\n"
         "- `set` — inject context variables.\n"
         "- `close_incident` — close the linked incident session.\n"
+        "- `manual_instruction` — pause and show step-by-step human "
+        "instructions for an action no MCP supports. Operator clicks "
+        "Confirm to continue, or Skip to abort.\n"
+        "\n"
+        "**Capability gap auto-fallback:** if a `tool:` step names an MCP "
+        "that is not in the live registry, the engine automatically pauses "
+        "the run with a manual-instruction explaining what was needed, what "
+        "input it would have received, and which MCPs *are* available.\n"
         "\n"
         "Reference values from earlier steps with `{{ step_id.field }}` or "
         "inputs with `{{ inputs.key }}`."

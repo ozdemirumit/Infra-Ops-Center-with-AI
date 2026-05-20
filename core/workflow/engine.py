@@ -215,6 +215,7 @@ class WorkflowEngine:
             "sleep": self._step_sleep,
             "set": self._step_set,
             "close_incident": self._step_close_incident,
+            "manual_instruction": self._step_manual_instruction,
         }
         handler = handlers.get(stype)
         if not handler:
@@ -266,25 +267,70 @@ class WorkflowEngine:
     # ── Step handlers ─────────────────────────────────────────────
 
     def _step_tool(self, step: dict, run: dict) -> tuple[bool, dict]:
-        """Call any registered MCP tool by name. MCP-agnostic."""
+        """
+        Call any registered MCP tool by name.
+
+        If the named MCP is NOT in the live registry, we don't silently fail —
+        we pause the workflow as a manual instruction explaining what the tool
+        was supposed to do, what input it would have received, and what the
+        human needs to do as a fallback. That matches the design rule:
+        "if no MCP can do it, tell us how to do it ourselves."
+        """
         tool_name = step.get("tool", "")
         tool_input = step.get("input", {}) or {}
         if not isinstance(tool_input, dict):
             raise ValueError("tool step: 'input' must be a mapping")
 
-        # MCP-agnostic: live registry membership is a warning, not a block
+        # Membership in the active registry
         in_registry = True
+        registry_names: list[str] = []
         try:
             from tools.registry import get_active_tools
-            known = {t.get("name") for t in get_active_tools()}
-            in_registry = tool_name in known
-            if not in_registry:
-                logger.warning(
-                    f"tool '{tool_name}' is not in the live registry"
-                )
+            registry_names = [t.get("name") for t in get_active_tools()]
+            in_registry = tool_name in registry_names
         except Exception:
             pass
 
+        # ── Capability gap → pause as manual instruction ──
+        # Skipped in dry-run mode — rehearsal should not require MCPs to exist.
+        if not in_registry and not step.get("allow_missing") and not run.get("dry_run"):
+            logger.warning(
+                f"tool '{tool_name}' is not in the registry — pausing for "
+                f"manual fallback (run {run['id']})"
+            )
+            cmd = tool_input.get("command") or tool_input.get("action") or ""
+            target = tool_input.get("target_host") or tool_input.get("host") or ""
+
+            instructions = (
+                f"Workflow needed MCP tool **`{tool_name}`** but it is not "
+                f"installed / active.\n\n"
+                f"**What it was asked to do:**\n"
+                f"- Tool: `{tool_name}`\n"
+                + (f"- Target: `{target}`\n" if target else "")
+                + (f"- Command/action: `{cmd}`\n" if cmd else "")
+                + "\n**To resolve, choose one:**\n"
+                "1. Perform the action manually on the target system, then "
+                "click **Confirm** to continue.\n"
+                "2. Install / enable the missing MCP, then re-run the workflow.\n"
+                "3. Edit the workflow to use a different MCP that *is* available.\n"
+                "\n"
+                f"**Currently available MCPs:** "
+                + (", ".join(f"`{n}`" for n in registry_names) if registry_names
+                   else "_none_")
+            )
+            run["status"] = STATUS_WAITING_APPROVAL
+            return True, {
+                "kind": "capability_gap",
+                "missing_tool": tool_name,
+                "input": tool_input,
+                "available_mcps": registry_names,
+                "instructions": instructions,
+                "title": f"Missing MCP: {tool_name}",
+                "risk": "high",
+                "waiting_since": _now(),
+            }
+
+        # ── Dry-run: no real dispatch ──
         if run.get("dry_run"):
             cmd = tool_input.get("command") or tool_input.get("action") or ""
             target = tool_input.get("target_host") or tool_input.get("host") or ""
@@ -299,6 +345,7 @@ class WorkflowEngine:
                 "dry_run": True, "in_registry": in_registry,
             }
 
+        # ── Real dispatch ──
         from core.agent_loop import _dispatch_tool
         raw = _dispatch_tool(tool_name, tool_input, run.get("connections") or {})
         return False, {
@@ -306,6 +353,35 @@ class WorkflowEngine:
             "input": tool_input,
             "output": _truncate_str(raw, 4000),
             "ok": not str(raw).lower().startswith("❌"),
+            "in_registry": in_registry,
+        }
+
+    def _step_manual_instruction(self, step: dict, run: dict) -> tuple[bool, dict]:
+        """
+        Pause the workflow with instructions for a human to perform an action
+        that no MCP currently supports. The operator clicks 'Confirm' (approve)
+        to continue, or 'Skip' (reject) to abort the workflow.
+
+        In dry-run we auto-confirm so the rest of the flow can be inspected.
+        """
+        title = step.get("title", "Manual action required")
+        body = step.get("body") or step.get("instructions") or ""
+        why = step.get("why", "")
+        risk = step.get("risk", "medium")
+
+        if run.get("dry_run"):
+            return False, {
+                "kind": "manual_instruction",
+                "title": title, "body": body, "why": why,
+                "risk": risk, "confirmed": True,
+                "note": "[DRY-RUN] auto-confirmed", "dry_run": True,
+            }
+
+        run["status"] = STATUS_WAITING_APPROVAL
+        return True, {
+            "kind": "manual_instruction",
+            "title": title, "body": body, "why": why,
+            "risk": risk, "waiting_since": _now(),
         }
 
     def _step_agent(self, step: dict, run: dict) -> tuple[bool, dict]:

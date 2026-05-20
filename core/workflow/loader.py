@@ -36,6 +36,7 @@ WORKFLOWS_DIR.mkdir(parents=True, exist_ok=True)
 VALID_STEP_TYPES = {
     "agent", "tool", "metric_check", "wait_approval",
     "branch", "notify", "sleep", "set", "close_incident",
+    "manual_instruction",
 }
 
 
@@ -143,6 +144,8 @@ def validate_workflow(wf: dict) -> list[str]:
             errors.append(f"step {sid}: notify step requires 'message'")
         if stype == "set" and not isinstance(step.get("values"), dict):
             errors.append(f"step {sid}: set step requires 'values: <mapping>'")
+        if stype == "manual_instruction" and not (step.get("body") or step.get("instructions")):
+            errors.append(f"step {sid}: manual_instruction needs 'body' (or 'instructions')")
 
     return errors
 

@@ -31,19 +31,21 @@ from tools.switch_tool import execute_web_command, SWITCH_OPS_TOOL
 from tools.deco_tool import execute_deco_api, DECO_OPS_TOOL
 from tools.commvault_tool import execute_commvault_api, COMMVAULT_OPS_TOOL
 from tools.windows_tool import execute_windows_command, WINDOWS_OPS_TOOL
+from tools.workflow_tool import execute_workflow_action, WORKFLOW_OPS_TOOL
 
 _BUILTIN_TOOL_DEFS: dict[str, dict] = {
     t["name"]: t
     for t in [
         LINUX_OPS_TOOL, ESXI_OPS_TOOL, ROUTER_OPS_TOOL,
         SWITCH_OPS_TOOL, DECO_OPS_TOOL, COMMVAULT_OPS_TOOL, WINDOWS_OPS_TOOL,
+        WORKFLOW_OPS_TOOL,
     ]
 }
 
 _BUILTIN_TOOL_ICONS: dict[str, str] = {
     "linux_ops": "🐧", "esxi_ops": "☁️", "router_ops": "🌐",
     "switch_ops": "🔌", "deco_ops": "📶", "commvault_ops": "💾",
-    "windows_ops": "🪟",
+    "windows_ops": "🪟", "workflow_ops": "🔀",
 }
 
 # Tool → Device Type Mapping

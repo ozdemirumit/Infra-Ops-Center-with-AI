@@ -123,15 +123,21 @@ def _dispatch_tool(tool_name: str, tool_input: dict, connections: dict) -> str:
             results.append(f"=== {s['name']} ({s['ip']}) ===")
             results.append(execute_windows_command(s["ip"], s["user"], s["password"], t_input))
         return "\n".join(results)
+    elif tool_name == "workflow_ops":
+        from tools.workflow_tool import execute_workflow_action
+        return execute_workflow_action(tool_input, connections)
     else:
         from tools.registry import dispatch_custom_tool
         return dispatch_custom_tool(tool_name, tool_input, connections)
 
 
+# Note: workflow_ops takes `action` (run/status/approve/...) not `command`.
+# Override the early-exit check for it.
+
 TOOL_ICONS = {
     "linux_ops": "🐧", "esxi_ops": "☁️", "router_ops": "🌐",
     "switch_ops": "🔌", "deco_ops": "📶", "commvault_ops": "💾",
-    "windows_ops": "🪟",
+    "windows_ops": "🪟", "workflow_ops": "🔀",
 }
 
 
