@@ -461,33 +461,73 @@ class WorkflowEngine:
         meta = {"workflow": run["workflow_name"], "run_id": run["id"]}
 
         if run.get("dry_run"):
-            logger.info(f"[wf-notify DRY-RUN] would send via {channel}: {message[:200]}")
+            extra = ""
+            if channel == "email":
+                extra = f" to={step.get('to', '(default)')!r} subject={step.get('subject', '')!r}"
+            logger.info(f"[wf-notify DRY-RUN] would send via {channel}{extra}: {message[:200]}")
             return False, {"channel": channel, "message": message,
                            "sent": False, "dry_run": True}
 
         if channel == "log":
             logger.log(_log_level(level), f"[wf-notify] {message}")
-        elif channel == "syslog":
+            return False, {"channel": channel, "message": message, "sent": True}
+
+        if channel == "syslog":
             try:
                 from logging_config.logger import get_logger as _gl
                 _gl("workflow.audit").info(f"NOTIFY {message} {meta}")
             except Exception:
                 logger.info(f"[wf-notify-fallback] {message}")
-        elif channel == "webhook":
+            return False, {"channel": channel, "message": message, "sent": True}
+
+        if channel == "webhook":
             url = step.get("url", "")
-            if url:
-                try:
-                    import httpx
-                    httpx.post(url, json={"message": message, **meta}, timeout=5.0)
-                except Exception as e:
-                    logger.warning(f"webhook notify failed: {e}")
-        elif self.notifier:
+            if not url:
+                return False, {"channel": channel, "sent": False,
+                               "error": "webhook step requires 'url'"}
+            try:
+                import httpx
+                httpx.post(url, json={"message": message, **meta}, timeout=5.0)
+                return False, {"channel": channel, "message": message,
+                               "sent": True, "url": url}
+            except Exception as e:
+                logger.warning(f"webhook notify failed: {e}")
+                return False, {"channel": channel, "sent": False, "error": str(e)}
+
+        if channel == "email":
+            from core.notifier import send_email
+            subject = step.get("subject") or (
+                f"[{run['workflow_name']}] notification"
+            )
+            to = step.get("to")  # list or comma-string or None (falls back to default)
+            html = bool(step.get("html", False))
+            # Auto-prepend a small header so recipients see context
+            body = (
+                f"{message}\n\n"
+                f"--\nWorkflow: {run['workflow_name']}\n"
+                f"Run: {run['id']}\n"
+                f"Triggered by: {run.get('triggered_by', 'manual')}\n"
+            ) if not html else message
+            result = send_email(subject=subject, body=body, to=to, html=html)
+            return False, {
+                "channel": channel,
+                "subject": subject,
+                "recipients": result["recipients"],
+                "sent": result["sent"],
+                "error": result["error"],
+            }
+
+        if self.notifier:
             try:
                 self.notifier(channel, message, meta)
+                return False, {"channel": channel, "message": message,
+                               "sent": True, "via": "custom"}
             except Exception as e:
                 logger.warning(f"custom notifier failed: {e}")
+                return False, {"channel": channel, "sent": False, "error": str(e)}
 
-        return False, {"channel": channel, "message": message, "sent": True}
+        return False, {"channel": channel, "message": message,
+                       "sent": False, "error": f"unknown channel '{channel}'"}
 
     def _step_sleep(self, step: dict, run: dict) -> tuple[bool, dict]:
         seconds = float(step.get("seconds", 1))

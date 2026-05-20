@@ -50,6 +50,18 @@ class Settings:
     # --- Commvault ---
     COMMVAULT_TIMEOUT: int = int(os.getenv("COMMVAULT_TIMEOUT", "30"))
 
+    # --- SMTP (email notifications) ---
+    # Password is read from the vault (api_keys/smtp_password) — never from env.
+    SMTP_HOST: str = os.getenv("SMTP_HOST", "")
+    SMTP_PORT: int = int(os.getenv("SMTP_PORT", "587"))
+    SMTP_USER: str = os.getenv("SMTP_USER", "")
+    SMTP_FROM: str = os.getenv("SMTP_FROM", "")
+    SMTP_USE_TLS: bool = os.getenv("SMTP_USE_TLS", "true").lower() == "true"
+    SMTP_USE_SSL: bool = os.getenv("SMTP_USE_SSL", "false").lower() == "true"
+    SMTP_TIMEOUT: int = int(os.getenv("SMTP_TIMEOUT", "10"))
+    # Default recipient(s) — comma-separated. Workflow steps can override per-step.
+    SMTP_DEFAULT_TO: str = os.getenv("SMTP_DEFAULT_TO", "")
+
     # --- RAG / Knowledge Base ---
     KNOWLEDGE_BASE_DIR: str = os.getenv(
         "KNOWLEDGE_BASE_DIR",
