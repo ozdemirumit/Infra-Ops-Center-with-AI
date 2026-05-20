@@ -70,10 +70,12 @@ def main():
     # --- AI Provider ---
     print("\n🤖 AI Provider Configuration")
     print("-" * 40)
-    print("1. Direct API (Anthropic/OpenAI/Gemini)")
+    print("1. Direct API (Anthropic / OpenAI / Gemini)")
     print("2. onPrem LLM Sentinel proxy")
+    print("3. On-prem Ollama (local models only)")
+    print("4. Hybrid (mix any of the above)")
 
-    mode = input("Select mode (1/2, default: 1): ").strip() or "1"
+    mode = input("Select mode (1-4, default: 1): ").strip() or "1"
 
     proxy_enabled = "false"
     proxy_host = "localhost"
@@ -81,18 +83,51 @@ def main():
     proxy_api_key = ""
     anthropic_key = ""
     openai_key = ""
+    gemini_key = ""
+    ollama_url = "http://localhost:11434"
+    ollama_model = "llama3.1"
 
     if mode == "2":
         proxy_enabled = "true"
         proxy_host = input("Proxy host (default: localhost): ").strip() or "localhost"
         proxy_port = input("Proxy port (default: 8765): ").strip() or "8765"
         proxy_api_key = input("Proxy API key: ").strip()
+    elif mode == "3":
+        print("\n🏠 Ollama Configuration")
+        ollama_url = input("Ollama URL (default: http://localhost:11434): ").strip() or "http://localhost:11434"
+        ollama_model = input("Default model (default: llama3.1): ").strip() or "llama3.1"
+    elif mode == "4":
+        print("\n🔀 Hybrid setup — leave any blank to skip:")
+        anthropic_key = input("Anthropic API key: ").strip()
+        openai_key = input("OpenAI API key: ").strip()
+        gemini_key = input("Gemini API key: ").strip()
+        enable_ollama = input("Enable Ollama? (y/N): ").strip().lower() == "y"
+        if enable_ollama:
+            ollama_url = input("Ollama URL (default: http://localhost:11434): ").strip() or "http://localhost:11434"
+            ollama_model = input("Default Ollama model (default: llama3.1): ").strip() or "llama3.1"
+        enable_proxy = input("Enable LLM Sentinel proxy? (y/N): ").strip().lower() == "y"
+        if enable_proxy:
+            proxy_enabled = "true"
+            proxy_host = input("Proxy host (default: localhost): ").strip() or "localhost"
+            proxy_port = input("Proxy port (default: 8765): ").strip() or "8765"
+            proxy_api_key = input("Proxy API key: ").strip()
     else:
         print("\nEnter API keys (leave blank to skip):")
         anthropic_key = input("Anthropic API key: ").strip()
         openai_key = input("OpenAI API key: ").strip()
+        gemini_key = input("Gemini API key: ").strip()
 
-    default_provider = "anthropic" if anthropic_key else ("openai" if openai_key else "anthropic")
+    # Pick default provider based on what's configured
+    if anthropic_key:
+        default_provider = "anthropic"
+    elif openai_key:
+        default_provider = "openai"
+    elif gemini_key:
+        default_provider = "gemini"
+    elif mode == "3":
+        default_provider = "ollama"
+    else:
+        default_provider = "anthropic"
 
     # --- Write .env ---
     print("\n📝 Writing .env file...")
@@ -106,6 +141,11 @@ DEFAULT_PROVIDER={default_provider}
 DEFAULT_MODEL=claude-sonnet-4-5
 ANTHROPIC_API_KEY={anthropic_key}
 OPENAI_API_KEY={openai_key}
+GEMINI_API_KEY={gemini_key}
+
+# --- Ollama (on-prem local models) ---
+OLLAMA_URL={ollama_url}
+OLLAMA_MODEL={ollama_model}
 
 # --- AI Proxy (onPrem LLM Sentinel) ---
 PROXY_ENABLED={proxy_enabled}

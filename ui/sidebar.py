@@ -49,38 +49,75 @@ def render_sidebar() -> dict:
 
         st.divider()
 
-        # AI Model
-        st.markdown("##### AI Model")
+        # AI Model — discovered dynamically (proxy + Ollama + fallback)
+        col_label, col_refresh = st.columns([4, 1])
+        with col_label:
+            st.markdown("##### AI Model")
+        with col_refresh:
+            if st.button("↻", key="refresh_models", help="Refresh model list"):
+                from proxy.model_discovery import invalidate_cache
+                invalidate_cache()
+                st.rerun()
 
-        PROVIDER_MODELS = {
-            "anthropic": ["claude-opus-4-5", "claude-sonnet-4-5", "claude-3-5-haiku-latest"],
-            "openai": ["gpt-4o", "gpt-4o-mini"],
-            "gemini": ["gemini-2.0-flash", "gemini-2.5-pro-preview-03-25"],
-            "ollama": ["qwen2.5:32b", "qwen3.5:35b", "command-r"],
-        }
+        # Discover available models (cached for 5 min)
+        try:
+            from proxy.model_discovery import get_available_models, get_provider_status
+            PROVIDER_MODELS = get_available_models()
+            provider_status = get_provider_status()
+        except Exception as e:
+            from proxy.model_discovery import FALLBACK_MODELS
+            PROVIDER_MODELS = FALLBACK_MODELS
+            provider_status = {}
+
+        if not PROVIDER_MODELS:
+            from proxy.model_discovery import FALLBACK_MODELS
+            PROVIDER_MODELS = FALLBACK_MODELS
+
+        # Show provider source badge (proxy / local / direct / fallback)
+        if provider_status:
+            badges = []
+            for p, s in provider_status.items():
+                if s["available"]:
+                    src = s["source"]
+                    icon = {"proxy": "🛡️", "local": "🏠", "direct": "🔌", "fallback": "📋"}.get(src, "•")
+                    badges.append(f"{icon}`{p}`")
+            if badges:
+                st.caption(" ".join(badges))
+
+        provider_list = list(PROVIDER_MODELS.keys())
 
         if "ai_provider" not in st.session_state:
-            st.session_state.ai_provider = settings.DEFAULT_PROVIDER
+            st.session_state.ai_provider = (
+                settings.DEFAULT_PROVIDER
+                if settings.DEFAULT_PROVIDER in PROVIDER_MODELS
+                else provider_list[0]
+            )
         if "ai_model" not in st.session_state:
-            st.session_state.ai_model = PROVIDER_MODELS.get(st.session_state.ai_provider, [""])[0]
+            models_for_provider = PROVIDER_MODELS.get(st.session_state.ai_provider, [""])
+            st.session_state.ai_model = models_for_provider[0] if models_for_provider else ""
 
         provider = st.selectbox(
-            "Provider", list(PROVIDER_MODELS.keys()),
-            index=list(PROVIDER_MODELS.keys()).index(st.session_state.ai_provider)
-            if st.session_state.ai_provider in PROVIDER_MODELS else 0,
+            "Provider", provider_list,
+            index=provider_list.index(st.session_state.ai_provider)
+            if st.session_state.ai_provider in provider_list else 0,
             key="provider_select", label_visibility="collapsed",
         )
         if provider != st.session_state.ai_provider:
             st.session_state.ai_provider = provider
-            st.session_state.ai_model = PROVIDER_MODELS[provider][0]
+            new_models = PROVIDER_MODELS.get(provider, [])
+            st.session_state.ai_model = new_models[0] if new_models else ""
 
-        model = st.selectbox(
-            "Model", PROVIDER_MODELS[provider],
-            index=PROVIDER_MODELS[provider].index(st.session_state.ai_model)
-            if st.session_state.ai_model in PROVIDER_MODELS[provider] else 0,
-            key="model_select", label_visibility="collapsed",
-        )
-        st.session_state.ai_model = model
+        available_models = PROVIDER_MODELS.get(provider, [])
+        if available_models:
+            model = st.selectbox(
+                "Model", available_models,
+                index=available_models.index(st.session_state.ai_model)
+                if st.session_state.ai_model in available_models else 0,
+                key="model_select", label_visibility="collapsed",
+            )
+            st.session_state.ai_model = model
+        else:
+            st.warning(f"No models available for {provider}")
 
         st.divider()
 
