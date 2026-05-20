@@ -340,52 +340,86 @@ with tab_generate:
         "Document Input Method",
         ["📄 Upload File", "📝 Paste Text", "🌐 Fetch from URL"],
         horizontal=True,
+        key="doc_input_method",
     )
 
-    doc_text = ""
+    # Persist doc_text across reruns
+    if "doc_text" not in st.session_state:
+        st.session_state["doc_text"] = ""
 
     if input_method == "📄 Upload File":
         uploaded_doc = st.file_uploader(
             "Upload Document",
             type=["pdf", "docx", "txt", "md", "html", "pptx"],
             help="REST API documentation, CLI reference, Swagger/OpenAPI spec, etc.",
+            key="doc_uploader",
         )
-        if uploaded_doc:
-            import tempfile
-            from core.document_processor import extract_text
-            with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_doc.name.split('.')[-1]}") as tmp:
-                tmp.write(uploaded_doc.getvalue())
-                tmp_path = tmp.name
-            try:
-                doc_text = extract_text(tmp_path)
-                st.success(f"✅ {uploaded_doc.name} read — {len(doc_text)} characters")
-            except Exception as e:
-                st.error(f"❌ Could not read document: {e}")
-            finally:
-                import os as _os
-                _os.unlink(tmp_path)
+        if uploaded_doc is not None:
+            # Re-read only if filename changed (avoid re-processing on every rerun)
+            cur_name = st.session_state.get("doc_uploaded_name")
+            if cur_name != uploaded_doc.name:
+                import tempfile
+                from core.document_processor import extract_text
+                with tempfile.NamedTemporaryFile(delete=False, suffix=f".{uploaded_doc.name.split('.')[-1]}") as tmp:
+                    tmp.write(uploaded_doc.getvalue())
+                    tmp_path = tmp.name
+                try:
+                    st.session_state["doc_text"] = extract_text(tmp_path)
+                    st.session_state["doc_uploaded_name"] = uploaded_doc.name
+                    st.success(f"✅ {uploaded_doc.name} read — {len(st.session_state['doc_text'])} characters")
+                except Exception as e:
+                    st.error(f"❌ Could not read document: {e}")
+                finally:
+                    import os as _os
+                    try:
+                        _os.unlink(tmp_path)
+                    except Exception:
+                        pass
+            else:
+                st.caption(f"✓ Loaded: {uploaded_doc.name} ({len(st.session_state['doc_text'])} chars)")
 
     elif input_method == "📝 Paste Text":
-        doc_text = st.text_area(
+        pasted = st.text_area(
             "API/CLI Document Text",
+            value=st.session_state.get("doc_text", ""),
             height=300,
             placeholder="Paste REST API endpoints, CLI commands, or document text here...",
+            key="doc_text_paste",
         )
+        st.session_state["doc_text"] = pasted
 
     elif input_method == "🌐 Fetch from URL":
-        doc_url = st.text_input("Document URL", placeholder="https://docs.example.com/api-reference")
-        if doc_url and st.button("🔗 Fetch from URL"):
-            try:
-                from core.document_processor import extract_from_url
-                import tempfile
-                tmp_dir = tempfile.mkdtemp()
-                _, doc_text = extract_from_url(doc_url, tmp_dir)
-                st.success(f"✅ URL read — {len(doc_text)} characters")
-            except Exception as e:
-                st.error(f"❌ Could not read URL: {e}")
+        doc_url = st.text_input(
+            "Document URL",
+            placeholder="https://docs.example.com/api-reference",
+            key="doc_url_input",
+        )
+        if doc_url and st.button("🔗 Fetch from URL", key="fetch_url_btn"):
+            with st.spinner(f"Fetching {doc_url}…"):
+                try:
+                    from core.document_processor import extract_from_url
+                    import tempfile
+                    tmp_dir = tempfile.mkdtemp()
+                    _, fetched = extract_from_url(doc_url, tmp_dir)
+                    st.session_state["doc_text"] = fetched
+                    st.success(f"✅ URL read — {len(fetched)} characters")
+                except Exception as e:
+                    st.error(f"❌ Could not read URL: {e}")
+
+    doc_text = st.session_state.get("doc_text", "")
+
+    # Clear button
+    if doc_text:
+        col_clear, _ = st.columns([1, 4])
+        with col_clear:
+            if st.button("🗑️ Clear Document", key="clear_doc"):
+                st.session_state.pop("doc_text", None)
+                st.session_state.pop("doc_uploaded_name", None)
+                st.session_state.pop("generated_tools", None)
+                st.rerun()
 
     if doc_text:
-        with st.expander("📖 Document Preview", expanded=False):
+        with st.expander(f"📖 Document Preview ({len(doc_text)} chars)", expanded=False):
             st.text(doc_text[:3000] + ("..." if len(doc_text) > 3000 else ""))
 
         st.divider()
@@ -397,22 +431,39 @@ with tab_generate:
                 "Generation Mode",
                 ["single", "multi"],
                 format_func=lambda x: {
-                    "single": "🎯 Single Tool — AI selects the right endpoint/command based on the action parameter",
+                    "single": "🎯 Single Tool — AI selects endpoint via action parameter",
                     "multi": "📦 Multiple Tools — Separate MCP tool for each endpoint/command",
                 }[x],
-                help="Single tool: Less complex, AI decides. Multiple: Each endpoint becomes a separate tool.",
+                key="gen_mode_radio",
             )
 
         with col_generate:
-            generate_btn = st.button("🤖 Generate with AI", type="primary", use_container_width=True)
+            st.write("")
+            generate_btn = st.button("🤖 Generate with AI", type="primary", use_container_width=True, key="gen_ai_btn")
 
         if generate_btn:
-            with st.spinner("🤖 AI is analyzing the document and generating tool definitions..."):
-                try:
-                    generated = generate_tools_from_doc(doc_text, mode=gen_mode)
-                    st.session_state["generated_tools"] = generated
-                except Exception as e:
-                    st.error(f"❌ Generation error: {e}")
+            if not doc_text.strip():
+                st.error("❌ Document text is empty.")
+            else:
+                with st.spinner("🤖 AI is analyzing the document and generating tool definitions…"):
+                    try:
+                        generated = generate_tools_from_doc(doc_text, mode=gen_mode)
+                        if not generated:
+                            st.warning("⚠️ AI returned no tools. Try a different document or generation mode.")
+                        else:
+                            st.session_state["generated_tools"] = generated
+                            st.success(f"✅ Generated {len(generated)} tool(s)!")
+                            st.rerun()
+                    except Exception as e:
+                        st.error(f"❌ Generation failed: {type(e).__name__}: {e}")
+                        with st.expander("Show troubleshooting tips"):
+                            st.markdown(
+                                "- Check that an AI provider is configured "
+                                "(Proxy Settings → 📊 Status tab)\n"
+                                "- Try a smaller document (max 30K characters)\n"
+                                "- If using Ollama, ensure the model supports JSON output\n"
+                                "- Try a stronger model (e.g. claude-opus, gpt-4o)"
+                            )
 
     # Show generated tools
     generated = st.session_state.get("generated_tools", [])

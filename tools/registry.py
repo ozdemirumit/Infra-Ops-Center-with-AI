@@ -454,54 +454,50 @@ def generate_tools_from_doc(
     """
     Generates MCP tool definitions from documentation text using AI.
 
+    Uses the unified AIProxy router — automatically routes through proxy,
+    direct API (Anthropic/OpenAI/Gemini), or local Ollama based on config.
+
     Args:
         doc_text: API/CLI documentation text
         mode: "single" (single tool) or "multi" (multiple tools)
-        proxy_base: AI Proxy base URL (None to use settings)
-        proxy_api_key: AI Proxy API key (None to use settings)
+        proxy_base: deprecated (kept for backward compat)
+        proxy_api_key: deprecated (kept for backward compat)
 
     Returns:
         List of generated tool definitions
     """
-    from config.settings import settings
-    import httpx
-
-    base = proxy_base or f"http://{settings.PROXY_HOST}:{settings.PROXY_PORT}"
-    key = proxy_api_key or settings.PROXY_API_KEY
-
     # Truncate if document is too long (token limit)
     max_chars = 30000
+    if not doc_text or not doc_text.strip():
+        raise ValueError("Document text is empty.")
+
     if len(doc_text) > max_chars:
         doc_text = doc_text[:max_chars] + "\n\n[... remainder of document truncated ...]"
 
     prompt = _GENERATE_PROMPT.format(mode=mode, doc_text=doc_text)
 
-    payload = {
-        "messages": [{"role": "user", "content": prompt}],
-        "system": "You are a JSON generator assistant. Return ONLY a valid JSON array, do not add any explanation.",
-    }
+    # Use the unified AI client (supports proxy / direct / ollama)
+    from proxy.ai_proxy import AIProxy
 
-    resp = httpx.post(
-        f"{base}/v1/chat",
-        json=payload,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {key}",
-        },
-        timeout=120.0,
+    proxy = AIProxy()
+    response = proxy.chat(
+        messages=[{"role": "user", "content": prompt}],
+        system=(
+            "You are a JSON generator assistant. "
+            "Return ONLY a valid JSON array of tool definitions. "
+            "Do not add any explanation, markdown headers, or commentary outside the JSON."
+        ),
+        tools=None,  # No tool calls needed; we want a JSON response
     )
-    resp.raise_for_status()
-    data = resp.json()
 
-    # Extract text content from response
+    # Extract text from response
     raw_text = ""
-    content = data.get("content", [])
-    if isinstance(content, list):
-        for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                raw_text += block.get("text", "")
-    elif isinstance(content, str):
-        raw_text = content
+    for block in response.content:
+        if getattr(block, "type", None) == "text":
+            raw_text += getattr(block, "text", "") or ""
+
+    if not raw_text.strip():
+        raise ValueError("AI returned an empty response. Check your AI provider configuration.")
 
     # Parse JSON array
     raw_text = raw_text.strip()
@@ -512,7 +508,22 @@ def generate_tools_from_doc(
         if match:
             raw_text = match.group(1).strip()
 
-    tools = json.loads(raw_text)
+    # Try to find the JSON array if there's surrounding text
+    if not raw_text.startswith("["):
+        # Extract first [ ... ] block
+        import re
+        match = re.search(r"\[\s*\{[\s\S]*\}\s*\]", raw_text)
+        if match:
+            raw_text = match.group(0)
+
+    try:
+        tools = json.loads(raw_text)
+    except json.JSONDecodeError as e:
+        logger.error(f"JSON parse failed. Raw text:\n{raw_text[:500]}")
+        raise ValueError(
+            f"AI did not return valid JSON. The model may need a different prompt or stronger instructions. "
+            f"Parse error: {e}"
+        )
 
     if not isinstance(tools, list):
         tools = [tools]
