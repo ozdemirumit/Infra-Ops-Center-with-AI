@@ -611,15 +611,43 @@ def _exec_ssh_backend(config: dict, action: str, connections: dict) -> str:
     return "\n".join(results)
 
 
+def _resolve_vault_refs(text: str) -> str:
+    """
+    Replace ${vault:category/name} placeholders with actual decrypted secret values.
+    Safe to call on any string — non-matching text is untouched.
+    """
+    if not text or "${vault:" not in text:
+        return text
+    import re
+    try:
+        from auth.vault import get_secret
+    except Exception:
+        return text
+
+    def _sub(m):
+        path = m.group(1).strip()
+        if "/" in path:
+            cat, name = path.split("/", 1)
+        else:
+            cat, name = "default", path
+        return get_secret(cat, name) or ""
+
+    return re.sub(r"\$\{vault:([^}]+)\}", _sub, text)
+
+
 def _exec_http_backend(config: dict, action: str, tool_input: dict) -> str:
-    """HTTP request backend."""
+    """HTTP request backend with vault placeholder support."""
     import requests
 
     method = config.get("method", "GET").upper()
     url_template = config.get("url_template", "")
-    headers = config.get("headers", {})
+    headers = dict(config.get("headers", {}) or {})
     body_template = config.get("body_template")
     timeout = config.get("timeout", 30)
+
+    # Resolve ${vault:...} placeholders in URL and headers
+    url_template = _resolve_vault_refs(url_template)
+    headers = {k: _resolve_vault_refs(str(v)) for k, v in headers.items()}
 
     # Template substitution
     url = url_template.replace("{{action}}", action)
@@ -629,6 +657,7 @@ def _exec_http_backend(config: dict, action: str, tool_input: dict) -> str:
     kwargs = {"headers": headers, "timeout": timeout}
     if body_template and method in ("POST", "PUT", "PATCH"):
         body_str = json.dumps(body_template) if isinstance(body_template, dict) else str(body_template)
+        body_str = _resolve_vault_refs(body_str)
         body_str = body_str.replace("{{action}}", action)
         for key, val in tool_input.items():
             body_str = body_str.replace(f"{{{{{key}}}}}", str(val))
