@@ -346,8 +346,13 @@ class WorkflowEngine:
             }
 
         # ── Real dispatch ──
+        # Workflows own their approval logic via wait_approval steps, so we
+        # bypass the dispatcher's interactive popup to avoid double-asking.
         from core.agent_loop import _dispatch_tool
-        raw = _dispatch_tool(tool_name, tool_input, run.get("connections") or {})
+        dispatched_input = dict(tool_input)
+        dispatched_input["_approval_bypass"] = True
+        raw = _dispatch_tool(tool_name, dispatched_input,
+                             run.get("connections") or {})
         return False, {
             "tool": tool_name,
             "input": tool_input,

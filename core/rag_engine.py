@@ -140,14 +140,17 @@ class RAGEngine:
     # DOCUMENT INDEXING
     # ══════════════════════════════════════════════════════════
 
-    def index_document(self, file_path: str, doc_id: str = None, source: str = "file") -> dict:
+    def index_document(self, file_path: str, doc_id: str = None,
+                       source: str = "file", mcp: str = "") -> dict:
         """
         Chunks the document and adds it to the TF-IDF index.
 
         Args:
             file_path: Document file path
             doc_id: Optional unique ID (generated from filename if not provided)
-            source: "file" | "url" — document source
+            source: "file" | "url" | "runbook" | "workflow" — document source
+            mcp: optional MCP name this document documents (e.g. "commvault_ops").
+                 Lets per-MCP search find only its own docs.
 
         Returns:
             {"doc_id": "...", "chunks": 5, "status": "ok"}
@@ -192,7 +195,8 @@ class RAGEngine:
             "chunks": len(chunks),
             "indexed_at": datetime.now().isoformat(),
             "size_bytes": os.path.getsize(file_path),
-            "source": source,          # "file" | "url"
+            "source": source,          # "file" | "url" | "runbook" | "workflow"
+            "mcp": mcp or "",          # MCP this doc documents (e.g. "commvault_ops")
             "modelfile_used": False,   # Whether used in Ollama Modelfile
         }
         self._save_metadata()
@@ -248,16 +252,20 @@ class RAGEngine:
     # SEARCH
     # ══════════════════════════════════════════════════════════
 
-    def search(self, query: str, top_k: int = None) -> list[dict]:
+    def search(self, query: str, top_k: int = None,
+               mcp: str = "", source: str = "") -> list[dict]:
         """
         Returns the most relevant chunks for the query using cosine similarity.
 
         Args:
-            query: Search query
-            top_k: Maximum number of results to return
+            query:  Search query
+            top_k:  Maximum number of results to return
+            mcp:    If set, only chunks from docs indexed with this MCP tag
+            source: If set, only chunks from docs with this source value
 
         Returns:
-            [{"text": "...", "filename": "...", "score": 0.85, "chunk_index": 0}, ...]
+            [{"text": "...", "filename": "...", "score": 0.85,
+              "chunk_index": 0, "doc_id": "..."}, ...]
         """
         if top_k is None:
             top_k = settings.RAG_TOP_K
@@ -273,16 +281,33 @@ class RAGEngine:
         # Calculate cosine similarity
         similarities = cosine_similarity(query_vec, self._tfidf_matrix).flatten()
 
+        # Filter chunks by metadata before ranking — keeps top_k semantics
+        # accurate when a filter is provided.
+        allowed_doc_ids: set | None = None
+        if mcp or source:
+            allowed_doc_ids = set()
+            for doc_id, meta in self._metadata.items():
+                if mcp and meta.get("mcp", "") != mcp:
+                    continue
+                if source and meta.get("source", "") != source:
+                    continue
+                allowed_doc_ids.add(doc_id)
+            if not allowed_doc_ids:
+                return []
+
         # Get top scores
-        top_indices = similarities.argsort()[::-1][:top_k]
+        order = similarities.argsort()[::-1]
 
         matches = []
-        for idx in top_indices:
+        for idx in order:
+            if len(matches) >= top_k:
+                break
             score = float(similarities[idx])
             if score <= 0:
                 continue
-
             chunk = self._chunks[idx]
+            if allowed_doc_ids is not None and chunk["doc_id"] not in allowed_doc_ids:
+                continue
             matches.append({
                 "text": chunk["text"],
                 "filename": chunk["filename"],
@@ -341,6 +366,7 @@ class RAGEngine:
                 "indexed_at": meta["indexed_at"],
                 "size_bytes": meta.get("size_bytes", 0),
                 "source": meta.get("source", "file"),
+                "mcp": meta.get("mcp", ""),
                 "modelfile_used": meta.get("modelfile_used", False),
             })
         return sorted(docs, key=lambda d: d["indexed_at"], reverse=True)

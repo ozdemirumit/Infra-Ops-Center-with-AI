@@ -81,6 +81,40 @@ def _resolve_target_servers(servers: list, tool_input: dict) -> tuple[list, bool
 # ─── Tool Dispatch ───────────────────────────────────────────────────────────
 
 def _dispatch_tool(tool_name: str, tool_input: dict, connections: dict) -> str:
+    # ── Universal action: search_api ──
+    # Works for ANY MCP — falls back to indexed docs tagged with this tool name.
+    if (tool_input.get("action") == "search_api"
+            or tool_input.get("command") == "search_api"):
+        from core.mcp_docs import handle_search_api_action
+        return handle_search_api_action(tool_name, tool_input)
+
+    # ── System-wide approval gate ──
+    # Every destructive call routes here first. Read-only and meta actions
+    # pass through untouched.
+    if not tool_input.get("_approval_bypass"):
+        from core.approval_gate import request_approval
+        gate = request_approval(
+            tool_name=tool_name,
+            tool_input=tool_input,
+            target=str(tool_input.get("target_host") or tool_input.get("host")
+                       or tool_input.get("path") or ""),
+        )
+        if gate is not None:
+            if gate["status"] == "waiting":
+                return (
+                    f"⏸️  PENDING APPROVAL — {tool_name}: "
+                    f"{tool_input.get('action') or tool_input.get('command') or '?'}\n"
+                    f"approval_id={gate['approval_id']}. The Home page "
+                    "shows a popup with Approve / Reject. Re-run the same "
+                    "request after deciding."
+                )
+            if gate["status"] == "rejected":
+                return (
+                    f"❌ Operator rejected this call "
+                    f"({gate.get('note') or 'no reason given'})."
+                )
+            # approved → fall through
+
     t_input = tool_input.get("command", tool_input.get("action"))
     if not t_input:
         return "⚠️ Command parameter is empty."

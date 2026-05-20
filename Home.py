@@ -159,6 +159,70 @@ if active_session and active_session.get("status") in (STATUS_ACTIVE, STATUS_COM
     elif active_session.get("status") == STATUS_FAILED:
         st.warning("❌ This task ended with an error. You can retry by typing a new message.")
 
+    # ── System-wide approval gate ──
+    # Any destructive MCP call queued by core/approval_gate.py shows up here.
+    # Uses st.dialog for a true popup when available, falls back to an
+    # in-page banner on older Streamlit.
+    try:
+        from core.approval_gate import list_pending, decide as _decide
+        _gate_pending = list_pending()
+    except Exception:
+        _gate_pending = []
+
+    if _gate_pending:
+        st.warning(
+            f"⚠️  **{len(_gate_pending)} system change(s) waiting for your approval.** "
+            "Review each call before it executes."
+        )
+
+        # st.dialog is available from Streamlit 1.32+. Wrap in try/except so
+        # we degrade gracefully.
+        _has_dialog = hasattr(st, "dialog")
+
+        def _render_approval_card(entry):
+            tname = entry["tool_name"]
+            tinput = entry.get("tool_input", {})
+            action = tinput.get("action") or tinput.get("command") or "(no command)"
+            target = entry.get("target") or "(no target)"
+            st.markdown(f"### 🛡️ Approve system change?")
+            st.markdown(
+                f"- **Tool:** `{tname}`\n"
+                f"- **Target:** `{target}`\n"
+                f"- **Action / command:**"
+            )
+            st.code(str(action), language="bash")
+
+            # Show raw input minus _approval_bypass
+            extra = {k: v for k, v in tinput.items()
+                     if k not in ("command", "action", "_approval_bypass")}
+            if extra:
+                st.caption("Full input:")
+                st.code(str(extra), language="python")
+
+            note = st.text_input("Note (optional)", key=f"note_{entry['approval_id']}")
+            col_a, col_r = st.columns(2)
+            with col_a:
+                if st.button("✅ Approve & Run", key=f"appr_{entry['approval_id']}",
+                             type="primary", use_container_width=True):
+                    _decide(entry["approval_id"], True, note)
+                    st.rerun()
+            with col_r:
+                if st.button("❌ Reject", key=f"rej_{entry['approval_id']}",
+                             use_container_width=True):
+                    _decide(entry["approval_id"], False, note)
+                    st.rerun()
+
+        if _has_dialog:
+            @st.dialog("⚠️ System change requires approval")
+            def _approval_dialog(entry):
+                _render_approval_card(entry)
+            # Pop the first one — operator can decide them one at a time
+            _approval_dialog(_gate_pending[0])
+        else:
+            for entry in _gate_pending:
+                with st.container(border=True):
+                    _render_approval_card(entry)
+
     # ── Is there a plan awaiting approval? ──
     pending_plan = st.session_state.get("pending_plan")
     pending_prompt = st.session_state.get("pending_plan_prompt", "")

@@ -23,18 +23,64 @@ logger = get_logger("tools")
 COMMVAULT_OPS_TOOL = {
     "name": "commvault_ops",
     "description": (
-        "Performs ALL operations on the Commvault backup system via REST API. "
-        "Supported operations: "
-        "List/add/delete clients, create/list/delete subclients, "
-        "run backups (full/incremental/differential/synthetic), "
-        "restore (in-place/out-of-place), job management (list/kill/pause/resume/restart), "
-        "plan management (list/create/delete), storage pools, alerts, "
-        "enable/disable agents, schedule policies, "
-        "user management, VM management, license info, CommCell status."
+        "Performs operations on the Commvault backup system via REST API. "
+        "Three modes:\n"
+        "1) Curated actions (recommended): list/run backups, restore, "
+        "job control, plans, subclients, users, etc. Pass a natural-language "
+        "phrase like 'list active jobs' or 'restore subclient #15 in-place'.\n"
+        "2) search_api: find an endpoint from indexed Commvault API docs. "
+        "Pass action='search_api', query='your question'. Useful when no "
+        "curated action covers what you need.\n"
+        "3) raw: direct REST call once you know the path. Pass "
+        "action='raw', method='GET|POST|PUT|DELETE', path='/Endpoint/123', "
+        "body={...}. POST/PUT/DELETE require allow_destructive=true.\n\n"
+        "Use action='list_actions' to see every curated action available."
     ),
     "input_schema": {
         "type": "object",
-        "properties": {"action": {"type": "string", "description": "Operation to perform on Commvault (English or Turkish)"}},
+        "properties": {
+            "action": {
+                "type": "string",
+                "description": (
+                    "Curated NL action (e.g. 'list jobs', 'start backup ID:5 full'), "
+                    "or one of: 'search_api', 'raw', 'list_actions'."
+                ),
+            },
+            # search_api
+            "query": {
+                "type": "string",
+                "description": "Search query — required when action='search_api'.",
+            },
+            # raw
+            "method": {
+                "type": "string", "enum": ["GET", "POST", "PUT", "DELETE"],
+                "description": "HTTP method for action='raw'.",
+            },
+            "path": {
+                "type": "string",
+                "description": "Endpoint path (e.g. '/Job/123') for action='raw'.",
+            },
+            "body": {
+                "type": "object",
+                "description": "JSON body for action='raw' POST/PUT.",
+            },
+            "params": {
+                "type": "object",
+                "description": "Query string params for action='raw'.",
+            },
+            "use_v4": {
+                "type": "boolean",
+                "description": "Use /commandcenter/api/v4 base for action='raw'.",
+            },
+            "allow_destructive": {
+                "type": "boolean",
+                "description": (
+                    "Required true when action='raw' and method ≠ GET. "
+                    "Engineers should wrap destructive raw calls in a "
+                    "workflow with a wait_approval step."
+                ),
+            },
+        },
         "required": ["action"]
     }
 }
@@ -564,20 +610,110 @@ def _do_alert_delete(cv, host, entity_id):
 # MAIN PROCESSING FUNCTION
 # ═══════════════════════════════════════════════
 
-def execute_commvault_api(host: str, user: str, pwd: str, action: str) -> str:
-    """Commvault SP36 REST API — all operational and administrative operations."""
+def _action_list_actions() -> str:
+    """Return the catalog of curated actions (no auth needed)."""
+    lines = ["Curated Commvault actions (call with natural language):"]
+    for name, meta in COMMVAULT_ACTIONS.items():
+        marker = " [V4]" if meta.get("v4") else ""
+        lines.append(f"  - {name}{marker}: {meta.get('desc', '')}")
+    lines.append("\nMeta-actions:")
+    lines.append("  - search_api: search indexed Commvault docs (needs query=...)")
+    lines.append("  - raw:        direct REST call (method, path, body, allow_destructive)")
+    return "\n".join(lines)
+
+
+def _action_raw(cv: CommvaultSession, host: str, tool_input: dict) -> str:
+    """
+    Direct REST passthrough. Destructive methods need explicit opt-in so the
+    LLM cannot accidentally DELETE/POST without operator awareness.
+    """
+    method = (tool_input.get("method") or "GET").upper()
+    path = (tool_input.get("path") or "").strip()
+    body = tool_input.get("body") or {}
+    params = tool_input.get("params") or {}
+    use_v4 = bool(tool_input.get("use_v4", False))
+    allow_destructive = bool(tool_input.get("allow_destructive", False))
+
+    if not path:
+        return "❌ raw: 'path' is required (e.g. '/Job/123')."
+    if method not in ("GET", "POST", "PUT", "DELETE"):
+        return f"❌ raw: invalid method '{method}'."
+    if method != "GET" and not allow_destructive:
+        return (
+            f"⚠️  raw {method} {path} blocked — set allow_destructive=true to "
+            "execute. Strong recommendation: wrap destructive raw calls in a "
+            "workflow with a wait_approval step so the operator can review "
+            "before the call fires."
+        )
+
+    audit_log(
+        AuditEvent.COMMAND_EXECUTE, target=host,
+        detail=f"Commvault RAW: {method} {path}",
+        extra={"tool": "commvault", "raw": True, "method": method,
+               "path": path, "v4": use_v4,
+               "allow_destructive": allow_destructive},
+    )
+
+    if not cv.login():
+        return "❌ Commvault login failed."
+
+    if method == "GET":
+        result = cv.get(path, params=params or None, use_v4=use_v4)
+    elif method == "POST":
+        result = cv.post(path, payload=body, use_v4=use_v4)
+    elif method == "PUT":
+        result = cv.put(path, payload=body, use_v4=use_v4)
+    else:  # DELETE
+        result = cv.delete(path, use_v4=use_v4)
+
+    return _format_result(result, host, f"RAW {method} {path}")
+
+
+def execute_commvault_api(host: str, user: str, pwd: str, action) -> str:
+    """Commvault SP36 REST API — curated actions, search_api, and raw passthrough."""
+    # ── Structured-input variants (action can come as a dict from new MCP calls) ──
+    # When the dispatcher passes tool_input as a dict via the agent loop, the
+    # caller flattens to `action`. But action=='raw'/'search_api'/'list_actions'
+    # also accept structured fields the LLM put into the tool input. Those
+    # arrive via thread-local stash set by _dispatch_tool — fall back to the
+    # legacy string-only path if not present.
+    tool_input: dict = {}
+    if isinstance(action, dict):
+        tool_input = action
+        action_str = action.get("action", "")
+    else:
+        action_str = str(action or "")
+        tool_input = {"action": action_str}
+
+    action_str = action_str.strip()
+    action_lower = action_str.lower()
+
+    # ── Meta-actions: no host required ──
+    if action_lower == "list_actions" or action_lower == "list actions":
+        return _action_list_actions()
+
+    if action_lower == "search_api":
+        from core.mcp_docs import handle_search_api_action
+        return handle_search_api_action("commvault_ops", tool_input)
+
+    # From here on we need a Commvault host.
     if not host:
         return "❌ Commvault server address is not defined. Add a Commvault server from the Device Management page."
 
-    logger.info(f"Commvault SP36 API: {host} | action={action}")
+    logger.info(f"Commvault SP36 API: {host} | action={action_str}")
     audit_log(AuditEvent.COMMAND_EXECUTE, target=host,
-              detail=f"Commvault API: {action[:100]}", extra={"tool": "commvault", "protocol": "HTTPS REST SP36"})
+              detail=f"Commvault API: {action_str[:100]}",
+              extra={"tool": "commvault", "protocol": "HTTPS REST SP36"})
 
     cv = CommvaultSession(host, user, pwd)
 
     try:
-        action_lower = action.lower()
-        entity_id = _extract_id_from_action(action)
+        # ── Raw passthrough ──
+        if action_lower == "raw":
+            return _action_raw(cv, host, tool_input)
+
+        entity_id = _extract_id_from_action(action_str)
+        action = action_str  # rest of the function expects string
 
         # ══════════════════════════════════════
         # WRITE OPERATIONS

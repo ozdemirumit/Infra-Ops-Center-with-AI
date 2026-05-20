@@ -116,6 +116,25 @@ with tab_file:
         help=f"Supported formats: {', '.join(ext.upper() for ext in sorted(extensions))}"
     )
 
+    # MCP tag — lets the document be searchable per-tool via search_api
+    try:
+        from tools.registry import get_active_tools
+        _mcp_names = sorted({t.get("name", "") for t in get_active_tools()
+                             if t.get("name")})
+    except Exception:
+        _mcp_names = []
+
+    mcp_tag = st.selectbox(
+        "Tag for which MCP? (optional)",
+        options=["(none)"] + _mcp_names,
+        help=(
+            "Pick an MCP name to index this document under that tool. The "
+            "MCP's action='search_api' will then be able to find passages "
+            "in this doc. Used for long API references (e.g. Commvault REST)."
+        ),
+    )
+    mcp_tag_value = "" if mcp_tag == "(none)" else mcp_tag
+
     if uploaded_files:
         kb_dir = Path(settings.KNOWLEDGE_BASE_DIR)
         kb_dir.mkdir(parents=True, exist_ok=True)
@@ -129,7 +148,8 @@ with tab_file:
             with open(save_path, "wb") as f:
                 f.write(uploaded_file.getvalue())
             try:
-                result = rag.index_document(str(save_path), source="file")
+                result = rag.index_document(str(save_path), source="file",
+                                            mcp=mcp_tag_value)
                 results.append((uploaded_file.name, result))
             except Exception as e:
                 results.append((uploaded_file.name, {"status": "error", "error": str(e)}))
