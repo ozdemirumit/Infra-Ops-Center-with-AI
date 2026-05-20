@@ -130,6 +130,15 @@ with tab_lib:
                 "Extra inputs (JSON)", value="{}", height=80,
                 help="Add inputs not pre-declared in the YAML.",
             )
+            dry_run = st.checkbox(
+                "🧪 Dry-run (simulate — no real tool calls, no LLM, no notifications)",
+                value=False,
+                help=(
+                    "Walks the workflow end-to-end with every side-effecting step "
+                    "mocked. Use it to verify control flow and step results before "
+                    "letting the workflow loose for real."
+                ),
+            )
             col_go, col_cancel = st.columns([1, 1])
             with col_go:
                 go = st.form_submit_button("▶️ Start run", type="primary",
@@ -149,11 +158,16 @@ with tab_lib:
                 st.warning("Could not parse extra inputs; ignored.")
             final_inputs = {**defaults, **inputs_override, **extra}
             engine = WorkflowEngine()
+            triggered = st.session_state.get("username", "manual")
+            if dry_run:
+                triggered = f"{triggered}/dry-run"
             run_id = engine.start(
                 wf, inputs=final_inputs, connections=connections,
-                triggered_by=st.session_state.get("username", "manual"),
+                triggered_by=triggered, dry_run=dry_run,
             )
-            st.success(f"Run started: `{run_id}`")
+            st.success(
+                f"{'🧪 Dry-run' if dry_run else 'Run'} started: `{run_id}`"
+            )
             st.session_state.pop("_wf_to_launch", None)
             st.session_state["_wf_view_run"] = run_id
             st.rerun()
@@ -180,14 +194,25 @@ with tab_runs:
 
         view_id = st.session_state.get("_wf_view_run")
 
+        # Filter
+        show_dry = st.checkbox("Show dry-runs", value=True, key="show_dry_filter")
+        if not show_dry:
+            runs = [r for r in runs if not r.get("dry_run")]
+
         for r in runs:
             opened = r["id"] == view_id
             status = r["status"]
+            dry_tag = "  🧪 DRY-RUN" if r.get("dry_run") else ""
             with st.expander(
-                f"{_status_chip(status)}  **{r['workflow_name']}**  "
+                f"{_status_chip(status)}{dry_tag}  **{r['workflow_name']}**  "
                 f"·  `{r['id']}`  ·  {r['created_at'][:16]}",
                 expanded=opened,
             ):
+                if r.get("dry_run"):
+                    st.info(
+                        "🧪 **Dry-run** — every side-effecting step was mocked. "
+                        "No MCP calls, no LLM, no notifications were sent."
+                    )
                 col_meta, col_btn = st.columns([3, 1])
                 with col_meta:
                     st.caption(f"Triggered by: {r.get('triggered_by', '?')}  ·  "

@@ -313,6 +313,138 @@ def test_engine_tool_step_calls_dispatch(monkeypatch):
     assert calls[0][1]["command"] == "uname -a"
 
 
+# ─── Dry-run mode ───────────────────────────────────────────────────
+
+def test_dry_run_tool_does_not_call_dispatch(monkeypatch):
+    """tool step must NOT invoke _dispatch_tool in dry-run mode."""
+    _isolate_runs()
+    from core.workflow import WorkflowEngine, get_run
+
+    called = []
+    def boom(name, inp, connections):
+        called.append((name, inp))
+        raise RuntimeError("dispatch should not run in dry-run!")
+
+    import core.agent_loop as al
+    monkeypatch.setattr(al, "_dispatch_tool", boom)
+
+    wf = {
+        "name": "test_dry_tool",
+        "steps": [
+            {"id": "do", "type": "tool", "tool": "some_mcp",
+             "input": {"command": "rm -rf /", "target_host": "srv01"}},
+        ],
+    }
+    run_id = WorkflowEngine().start(wf, dry_run=True)
+    run = get_run(run_id)
+    assert run["status"] == "completed"
+    assert called == []  # dispatch must not have been invoked
+
+    result = run["history"][0]["result"]
+    assert result["dry_run"] is True
+    assert "DRY-RUN" in result["output"]
+    assert "some_mcp" in result["output"]
+
+
+def test_dry_run_agent_skips_llm():
+    """agent step must produce a mock summary without touching the proxy."""
+    _isolate_runs()
+    from core.workflow import WorkflowEngine, get_run
+
+    wf = {
+        "name": "test_dry_agent",
+        "steps": [
+            {"id": "investigate", "type": "agent",
+             "prompt": "What is wrong with srv01?", "max_steps": 5},
+        ],
+    }
+    # If the agent actually called AIProxy() with no API key, the test
+    # would either fail or make a network call. Dry-run guarantees neither.
+    run_id = WorkflowEngine().start(wf, dry_run=True)
+    run = get_run(run_id)
+    assert run["status"] == "completed"
+    res = run["history"][0]["result"]
+    assert res["dry_run"] is True
+    assert res["turns"] == 0
+    assert "What is wrong with srv01" in res["summary"]
+
+
+def test_dry_run_wait_approval_auto_approves():
+    """wait_approval must auto-pass in dry-run so subsequent steps still run."""
+    _isolate_runs()
+    from core.workflow import WorkflowEngine, get_run
+
+    wf = {
+        "name": "test_dry_approval",
+        "steps": [
+            {"id": "ask", "type": "wait_approval", "prompt": "Risky thing?",
+             "risk": "high"},
+            {"id": "after", "type": "notify", "channel": "log",
+             "message": "approved"},
+        ],
+    }
+    run_id = WorkflowEngine().start(wf, dry_run=True)
+    run = get_run(run_id)
+    assert run["status"] == "completed"
+    statuses = {h["step"]: h["status"] for h in run["history"]}
+    assert statuses["ask"] == "completed"
+    assert statuses["after"] == "completed"
+    assert run["history"][0]["result"]["dry_run"] is True
+
+
+def test_dry_run_notify_does_not_send():
+    """notify must not invoke any real channel in dry-run."""
+    _isolate_runs()
+    from core.workflow import WorkflowEngine, get_run
+
+    wf = {
+        "name": "test_dry_notify",
+        "steps": [
+            {"id": "say", "type": "notify", "channel": "webhook",
+             "url": "http://invalid.example.com/this-would-fail",
+             "message": "should never send"},
+        ],
+    }
+    # If notify actually fired a webhook, httpx.post would raise / timeout.
+    # In dry-run it must short-circuit cleanly.
+    run_id = WorkflowEngine().start(wf, dry_run=True)
+    run = get_run(run_id)
+    assert run["status"] == "completed"
+    res = run["history"][0]["result"]
+    assert res["sent"] is False
+    assert res["dry_run"] is True
+
+
+def test_dry_run_sleep_does_not_sleep():
+    """sleep must not actually pause the process in dry-run."""
+    _isolate_runs()
+    import time as _t
+    from core.workflow import WorkflowEngine, get_run
+
+    wf = {
+        "name": "test_dry_sleep",
+        "steps": [
+            {"id": "pause", "type": "sleep", "seconds": 30},
+        ],
+    }
+    t0 = _t.time()
+    run_id = WorkflowEngine().start(wf, dry_run=True)
+    elapsed = _t.time() - t0
+    assert elapsed < 5.0, f"dry-run sleep blocked for {elapsed}s"
+    res = get_run(run_id)["history"][0]["result"]
+    assert res["slept"] == 0
+    assert res["would_sleep"] == 30
+
+
+def test_real_run_default_is_not_dry():
+    """Default mode is real — dry_run flag must be False unless asked."""
+    _isolate_runs()
+    from core.workflow import WorkflowEngine, get_run
+    wf = {"name": "x", "steps": [{"id": "v", "type": "set", "values": {"a": 1}}]}
+    run_id = WorkflowEngine().start(wf)
+    assert get_run(run_id).get("dry_run") is False
+
+
 if __name__ == "__main__":
     import pytest
     pytest.main([__file__, "-v"])

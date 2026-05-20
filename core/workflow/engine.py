@@ -57,8 +57,17 @@ class WorkflowEngine:
     def start(self, workflow: dict, inputs: Optional[dict] = None,
               connections: Optional[dict] = None,
               session_id: Optional[str] = None,
-              triggered_by: str = "manual") -> str:
-        """Begin a new run. Returns run_id."""
+              triggered_by: str = "manual",
+              dry_run: bool = False) -> str:
+        """
+        Begin a new run. Returns run_id.
+
+        If `dry_run` is True, every side-effecting step (tool, agent,
+        metric_check, notify, close_incident, sleep) is mocked — the
+        workflow's control flow runs end-to-end without touching MCPs,
+        the LLM, the monitor, or any external system. Use it to verify
+        a workflow's structure before letting it loose for real.
+        """
         run_id = uuid.uuid4().hex[:12]
         run = {
             "id": run_id,
@@ -69,6 +78,7 @@ class WorkflowEngine:
             "triggered_by": triggered_by,
             "session_id": session_id,
             "connections": connections or {},
+            "dry_run": bool(dry_run),
             "context": {
                 "inputs": {**(workflow.get("inputs") or {}), **(inputs or {})},
                 "steps": {},   # step_id -> result dict
@@ -257,26 +267,39 @@ class WorkflowEngine:
 
     def _step_tool(self, step: dict, run: dict) -> tuple[bool, dict]:
         """Call any registered MCP tool by name. MCP-agnostic."""
-        from core.agent_loop import _dispatch_tool
-
         tool_name = step.get("tool", "")
         tool_input = step.get("input", {}) or {}
         if not isinstance(tool_input, dict):
             raise ValueError("tool step: 'input' must be a mapping")
 
-        # MCP-agnostic: validate against the live registry only as a warning,
-        # not a hard error (registry may load lazily in some envs)
+        # MCP-agnostic: live registry membership is a warning, not a block
+        in_registry = True
         try:
             from tools.registry import get_active_tools
             known = {t.get("name") for t in get_active_tools()}
-            if tool_name not in known:
+            in_registry = tool_name in known
+            if not in_registry:
                 logger.warning(
-                    f"tool '{tool_name}' is not in the live registry; "
-                    f"attempting dispatch anyway"
+                    f"tool '{tool_name}' is not in the live registry"
                 )
         except Exception:
             pass
 
+        if run.get("dry_run"):
+            cmd = tool_input.get("command") or tool_input.get("action") or ""
+            target = tool_input.get("target_host") or tool_input.get("host") or ""
+            mock = (
+                f"[DRY-RUN] would call MCP tool '{tool_name}'"
+                + (f" on {target}" if target else "")
+                + (f": {str(cmd)[:300]}" if cmd else "")
+            )
+            return False, {
+                "tool": tool_name, "input": tool_input,
+                "output": mock, "ok": True,
+                "dry_run": True, "in_registry": in_registry,
+            }
+
+        from core.agent_loop import _dispatch_tool
         raw = _dispatch_tool(tool_name, tool_input, run.get("connections") or {})
         return False, {
             "tool": tool_name,
@@ -287,13 +310,21 @@ class WorkflowEngine:
 
     def _step_agent(self, step: dict, run: dict) -> tuple[bool, dict]:
         """Run a free-form agent turn. The agent picks tools dynamically."""
+        prompt = step.get("prompt", "")
+        max_steps = int(step.get("max_steps", 8))
+
+        if run.get("dry_run"):
+            return False, {
+                "summary": f"[DRY-RUN] agent would run prompt: {prompt[:200]}",
+                "tools_used": [],
+                "turns": 0,
+                "dry_run": True,
+            }
+
         from proxy.ai_proxy import AIProxy
         from core.agent_loop import _dispatch_tool, _is_change_command
         from tools.registry import get_active_tools
         from config.settings import settings
-
-        prompt = step.get("prompt", "")
-        max_steps = int(step.get("max_steps", 8))
         proxy = AIProxy()
 
         messages = [{"role": "user", "content": prompt}]
@@ -346,24 +377,30 @@ class WorkflowEngine:
         }
 
     def _step_metric_check(self, step: dict, run: dict) -> tuple[bool, dict]:
-        from core.monitor import run_check_now, get_checks_config, _compare
+        from core.monitor import run_check_now, get_checks_config, _compare, load_state
 
         metric = step.get("metric", "")
         cfg = get_checks_config().get(metric, {})
-        # Trigger a fresh check
-        results = run_check_now(metric)
-        # Pick latest result for this metric
-        latest = [r for r in results if r.get("check_name") == metric]
+
+        if run.get("dry_run"):
+            # Use the last cached results — no fresh check, no SSH/HTTP/etc.
+            state = load_state()
+            results = state.results
+        else:
+            # Trigger a fresh check
+            results = run_check_now(metric)
 
         expect = step.get("expect", {}) or {}
         compare_op = expect.get("compare", cfg.get("compare", "gt"))
         threshold = expect.get("value", cfg.get("threshold", 0))
 
+        # Pick rows for this metric only
+        latest = [r for r in results if r.get("check_name") == metric]
+
         any_failed = False
         details = []
         for r in latest:
             v = r.get("value")
-            # `expect` describes the SUCCESS condition; treat its negation as failure
             ok = _compare(v, threshold, compare_op)
             details.append({
                 "server": r.get("server_name", ""), "value": v,
@@ -372,13 +409,29 @@ class WorkflowEngine:
             if not ok:
                 any_failed = True
 
-        return False, {
+        out = {
             "metric": metric, "expectation_met": (not any_failed) if details else False,
             "failed": any_failed, "results": details,
         }
+        if run.get("dry_run"):
+            out["dry_run"] = True
+            out["note"] = "used cached results; no fresh check ran"
+        return False, out
 
     def _step_wait_approval(self, step: dict, run: dict) -> tuple[bool, dict]:
-        """Pause the run. UI shows an approval card and calls resume()."""
+        """Pause the run. UI shows an approval card and calls resume().
+
+        In dry-run mode this is auto-approved with a marker, so the
+        rest of the workflow can be inspected without operator action.
+        """
+        if run.get("dry_run"):
+            return False, {
+                "approved": True,
+                "note": "[DRY-RUN] auto-approved for simulation",
+                "prompt": step.get("prompt", "Approval required"),
+                "risk": step.get("risk", "medium"),
+                "dry_run": True,
+            }
         run["status"] = STATUS_WAITING_APPROVAL
         return True, {
             "prompt": step.get("prompt", "Approval required"),
@@ -406,6 +459,11 @@ class WorkflowEngine:
         message = step.get("message", "")
         level = step.get("level", "info")
         meta = {"workflow": run["workflow_name"], "run_id": run["id"]}
+
+        if run.get("dry_run"):
+            logger.info(f"[wf-notify DRY-RUN] would send via {channel}: {message[:200]}")
+            return False, {"channel": channel, "message": message,
+                           "sent": False, "dry_run": True}
 
         if channel == "log":
             logger.log(_log_level(level), f"[wf-notify] {message}")
@@ -435,6 +493,8 @@ class WorkflowEngine:
         seconds = float(step.get("seconds", 1))
         # Cap to 5 minutes — long sleeps belong in scheduler, not workflow
         seconds = max(0.0, min(seconds, 300.0))
+        if run.get("dry_run"):
+            return False, {"slept": 0, "would_sleep": seconds, "dry_run": True}
         time.sleep(seconds)
         return False, {"slept": seconds}
 
@@ -450,6 +510,8 @@ class WorkflowEngine:
         sid = run.get("session_id")
         if not sid:
             return False, {"closed": False, "reason": "no session linked"}
+        if run.get("dry_run"):
+            return False, {"closed": False, "would_close": sid, "dry_run": True}
         try:
             from sessions.storage import get_session, set_session_completed
             sess = get_session(sid)
@@ -463,7 +525,9 @@ class WorkflowEngine:
     # ── Completion hook ───────────────────────────────────────────
 
     def _on_complete(self, run: dict) -> None:
-        """Persist a runbook when the run touched real tools."""
+        """Persist a runbook when the run touched real tools (skips dry-runs)."""
+        if run.get("dry_run"):
+            return
         try:
             tool_calls = sum(
                 1 for h in run.get("history", [])
